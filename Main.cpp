@@ -105,7 +105,9 @@ int main(int argc, char **args)
 
       do
       {
+        ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         optmma->Update( dfdx, g, dgdx );
+        ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         topOpt->MatIntFnc( optmma->Get_x() );
         ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         topOpt->FESolve();
@@ -266,9 +268,9 @@ int ResultOut ( TopOpt *topOpt, int it )
   FILE *values;
   ierr = PetscFOpen(topOpt->comm, "Values.txt", "a", &values); CHKERRQ(ierr);
   ierr = PetscFPrintf(topOpt->comm, values, "*********************************************\n");
-  ierr = PetscFPrintf(topOpt->comm, values, "After %4i iterations with a penalty of %5.4g the",
+  ierr = PetscFPrintf(topOpt->comm, values, "After %4i iterations with a penalty of %5.4g the\n",
               it, topOpt->penal); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, " ratio of stiffness sum to volume sum is %5.4g\n",
+  ierr = PetscFPrintf(topOpt->comm, values, "ratio of stiffness sum to volume sum is %5.4g\n",
               Esum/Vsum); CHKERRQ(ierr);
   ierr = PetscFPrintf(topOpt->comm, values, "*********************************************\n\n");
   ierr = PetscFClose(topOpt->comm, values); CHKERRQ(ierr);

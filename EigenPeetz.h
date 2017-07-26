@@ -117,7 +117,7 @@ private:
   std::vector<Vec> xlist;
   std::vector<Vec> flist;
   Vec f_end, x_end;
-  Mat AmsB, AmsB_main;
+  std::vector<Mat> Acopy, Bcopy, AmsB;
   std::vector<Vec*> QMatP;
   std::vector<Vec> OPx;
   PetscScalar sigma;

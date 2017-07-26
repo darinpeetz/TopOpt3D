@@ -138,7 +138,7 @@ public:
   PetscInt bucklingIt, dynamicIt;              //Number of iterations for eigenvalue problems
 
   /// Profiling variables
-  int funcEvent, FEEvent, JDCompEvent;
+  int funcEvent, FEEvent, JDCompEvent, UpdateEvent;
   int *JDMGEvents;
 
 

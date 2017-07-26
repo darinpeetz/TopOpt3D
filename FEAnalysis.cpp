@@ -312,7 +312,7 @@ int TopOpt::FESolve( )
     ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
     ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
     ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
-    if (!strcmp(this->smoother.c_str(), smooth_ksp_type))
+    if (strcmp(this->smoother.c_str(), smooth_ksp_type))
     {
       if (!strcmp(this->smoother.c_str(), KSPRICHARDSON))
       {

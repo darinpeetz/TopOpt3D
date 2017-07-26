@@ -67,7 +67,7 @@ JDMG::~JDMG()
 PetscErrorCode JDMG::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &verbose, NULL);
+  PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;
 }
@@ -279,17 +279,28 @@ PetscErrorCode JDMG::Compute_Init()
   TempScal.setZero(jmax);
 
   // Preallocate for operators
+  AmsB.resize(levels); Acopy.resize(levels-1); Bcopy.resize(levels-1);
   Dlist.resize(levels-1);
   xlist.resize(levels);
   flist.resize(levels);
   QMatP.resize(levels-1);
   OPx.resize(levels-1);
   ierr = Setup_Coarse(); CHKERRQ(ierr);
-  for (int ii = 1; ii < levels; ii++)
+  for (int ii = 0; ii < levels-1; ii++)
   {
-    ierr = MatCreateVecs(A[ii], xlist.data()+ii, flist.data()+ii); CHKERRQ(ierr);
-    ierr = MatCreateVecs(A[ii-1], Dlist.data()+ii-1, OPx.data()+ii-1); CHKERRQ(ierr);
-    ierr = VecDuplicateVecs(Q[ii-1][0], Qsize, QMatP.data()+ii-1); CHKERRQ(ierr);
+    // Combined matrices at each level
+    ierr = MatDuplicate(A[ii], MAT_DO_NOT_COPY_VALUES, AmsB.data()+ii); CHKERRQ(ierr);
+    ierr = MatAXPY(AmsB[ii], 1.0, B[ii], DIFFERENT_NONZERO_PATTERN); CHKERRQ(ierr);
+    ierr = MatDuplicate(AmsB[ii], MAT_SHARE_NONZERO_PATTERN, Acopy.data()+ii); CHKERRQ(ierr);
+    ierr = MatZeroEntries(Acopy[ii]); CHKERRQ(ierr);
+    ierr = MatCopy(A[ii], Acopy[ii], DIFFERENT_NONZERO_PATTERN); CHKERRQ(ierr);
+    ierr = MatDuplicate(AmsB[ii], MAT_SHARE_NONZERO_PATTERN, Bcopy.data()+ii); CHKERRQ(ierr);
+    ierr = MatZeroEntries(Bcopy[ii]); CHKERRQ(ierr);
+    ierr = MatCopy(B[ii], Bcopy[ii], DIFFERENT_NONZERO_PATTERN); CHKERRQ(ierr);
+    // Vectors
+    ierr = MatCreateVecs(A[ii+1], xlist.data()+ii+1, flist.data()+ii+1); CHKERRQ(ierr);
+    ierr = MatCreateVecs(A[ii], Dlist.data()+ii, OPx.data()+ii); CHKERRQ(ierr);
+    ierr = VecDuplicateVecs(Q[ii][0], Qsize, QMatP.data()+ii); CHKERRQ(ierr);
   }
 
   // Prep coarse problem
@@ -333,25 +344,25 @@ PetscErrorCode JDMG::Setup_Coarse()
     lcols += Qsize;
   }
   // Initialize the matrix
-  ierr = MatCreate(comm, &AmsB); CHKERRQ(ierr);
-  ierr = MatSetSizes(AmsB, lrows, lcols, rows+Qsize, cols+Qsize); CHKERRQ(ierr);
-  ierr = MatSetOptionsPrefix(AmsB, "JDMG_AmsB_"); CHKERRQ(ierr);
-  ierr = MatSetFromOptions(AmsB); CHKERRQ(ierr);
+  ierr = MatCreate(comm, &AmsB.back()); CHKERRQ(ierr);
+  ierr = MatSetSizes(AmsB.back(), lrows, lcols, rows+Qsize, cols+Qsize); CHKERRQ(ierr);
+  ierr = MatSetOptionsPrefix(AmsB.back(), "JDMG_AmsB_"); CHKERRQ(ierr);
+  ierr = MatSetFromOptions(AmsB.back()); CHKERRQ(ierr);
 
   // Preallocate inefficiently, but only done once and on a small matrix
-  ierr = MatSetUp(AmsB); CHKERRQ(ierr);
+  ierr = MatSetUp(AmsB.back()); CHKERRQ(ierr);
   // Add "Q" rows/columns
   if (myid == endrank)
   {
     ArrayXPI index1 = ArrayXPI::LinSpaced(rows, 0, rows-1);
     ArrayXPI index2 = ArrayXPI::LinSpaced(Qsize, rows, rows+Qsize-1);
     MatrixPS values = MatrixPS::Zero(rows, Qsize);
-    ierr = MatSetValues(AmsB, rows, index1.data(), Qsize, index2.data(),
+    ierr = MatSetValues(AmsB.back(), rows, index1.data(), Qsize, index2.data(),
           values.data(), INSERT_VALUES);
-    ierr = MatSetValues(AmsB, Qsize, index2.data(), rows, index1.data(),
+    ierr = MatSetValues(AmsB.back(), Qsize, index2.data(), rows, index1.data(),
           values.data(), INSERT_VALUES);
     for (int ii = 0; ii < Qsize; ii++){
-      ierr = MatSetValue(AmsB, rows+ii, rows+ii, 1.0, INSERT_VALUES); CHKERRQ(ierr);}
+      ierr = MatSetValue(AmsB.back(), rows+ii, rows+ii, 1.0, INSERT_VALUES); CHKERRQ(ierr);}
   }
   // Add "A-sigma*B" chunk of matrix
   PetscInt rstart = 0, rend = 0, nz;
@@ -361,24 +372,18 @@ PetscErrorCode JDMG::Setup_Coarse()
   for (int ii = rstart; ii < rend; ii++)
   {
     ierr = MatGetRow(A.back(), ii, &nz, &cwork, &vwork); CHKERRQ(ierr);
-    ierr = MatSetValues(AmsB, 1, &ii, nz, cwork, vwork, INSERT_VALUES); CHKERRQ(ierr);
+    ierr = MatSetValues(AmsB.back(), 1, &ii, nz, cwork, vwork, INSERT_VALUES); CHKERRQ(ierr);
     ierr = MatRestoreRow(A.back(), ii, &nz, &cwork, &vwork); CHKERRQ(ierr);
     // This is added because the submatrix method below didn't work
     ierr = MatGetRow(B.back(), ii, &nz, &cwork, &vwork); CHKERRQ(ierr);
-    ierr = MatSetValues(AmsB, 1, &ii, nz, cwork, vwork, INSERT_VALUES); CHKERRQ(ierr);
+    ierr = MatSetValues(AmsB.back(), 1, &ii, nz, cwork, vwork, INSERT_VALUES); CHKERRQ(ierr);
     ierr = MatRestoreRow(B.back(), ii, &nz, &cwork, &vwork); CHKERRQ(ierr);
   }
-  ierr = MatAssemblyBegin(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = MatAssemblyEnd(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyBegin(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
-  // Create a submatrix containing just the A-sigma*B part and subract sigma*B
-  /*IS row;
-  ierr = MatGetOwnershipIS(A.back(), &row, NULL); CHKERRQ(ierr);
-  ierr = MatGetSubMatrix(AmsB, row, row, MAT_INITIAL_MATRIX, &AmsB_main); CHKERRQ(ierr);
-  ierr = MatAXPY(AmsB_main, 1, B.back(), DIFFERENT_NONZERO_PATTERN); CHKERRQ(ierr);
-  ierr = ISDestroy(&row); CHKERRQ(ierr);*/
-
-  ierr = MatCreateVecs(AmsB, &x_end, &f_end); CHKERRQ(ierr);
+  // Solution and rhs vectors at coarse level
+  ierr = MatCreateVecs(AmsB.back(), &x_end, &f_end); CHKERRQ(ierr);
   ierr = VecSet(f_end, 0.0); CHKERRQ(ierr);
 
   return 0;
@@ -515,16 +520,16 @@ PetscErrorCode JDMG::Compute()
       PetscInt col = ncoarse + nev_conv;
       ArrayXPI rows = ArrayXPI::LinSpaced(nlcoarse, 0, nlcoarse-1);
       ierr = VecGetArray(BQ.back()[nev_conv], &p_BQ); CHKERRQ(ierr);
-      ierr = MatSetValues(AmsB, 1, &col, nlcoarse, rows.data(),
+      ierr = MatSetValues(AmsB.back(), 1, &col, nlcoarse, rows.data(),
                   p_BQ, INSERT_VALUES); CHKERRQ(ierr);
-      ierr = MatSetValues(AmsB, nlcoarse, rows.data(), 1, &col,
+      ierr = MatSetValues(AmsB.back(), nlcoarse, rows.data(), 1, &col,
                   p_BQ, INSERT_VALUES); CHKERRQ(ierr);
       ierr = VecRestoreArray(BQ.back()[nev_conv], &p_BQ); CHKERRQ(ierr);
-      ierr = MatAssemblyBegin(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+      ierr = MatAssemblyBegin(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
       ierr = VecNorm(residual, NORM_2, &rnorm); CHKERRQ(ierr);
       ierr = VecNorm(AQ[0][nev_conv], NORM_2, &Au_norm);
-      ierr = MatAssemblyEnd(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+      ierr = MatAssemblyEnd(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
 
       if ( myid == 0 && this->verbose >= 2)
@@ -683,6 +688,7 @@ PetscErrorCode JDMG::Compute_Clean()
     ierr = VecDestroyVecs(Qsize, Q.data()+ii);  CHKERRQ(ierr);
     ierr = VecDestroyVecs(Qsize, AQ.data()+ii); CHKERRQ(ierr);
     ierr = VecDestroyVecs(Qsize, BQ.data()+ii); CHKERRQ(ierr);
+    ierr = MatDestroy(AmsB.data() + ii); CHKERRQ(ierr);
   }
   AQ.resize(0); BQ.resize(0);
 
@@ -694,16 +700,16 @@ PetscErrorCode JDMG::Compute_Clean()
   ierr = KSPDestroy(&ksp_coarse); CHKERRQ(ierr);
 
   // Destroy Operators
-  for (int ii = 1; ii < levels; ii++)
+  for (int ii = 0; ii < levels-1; ii++)
   {
-    ierr = VecDestroy(xlist.data()+ii); CHKERRQ(ierr);
-    ierr = VecDestroy(flist.data()+ii); CHKERRQ(ierr);
-    ierr = VecDestroy(Dlist.data()+ii-1); CHKERRQ(ierr);
-    ierr = VecDestroy(OPx.data()+ii-1); CHKERRQ(ierr);
-    ierr = VecDestroyVecs(Qsize, QMatP.data()+ii-1); CHKERRQ(ierr);
+    ierr = MatDestroy(Acopy.data()+ii); CHKERRQ(ierr);
+    ierr = MatDestroy(Bcopy.data()+ii); CHKERRQ(ierr);
+    ierr = VecDestroy(xlist.data()+ii+1); CHKERRQ(ierr);
+    ierr = VecDestroy(flist.data()+ii+1); CHKERRQ(ierr);
+    ierr = VecDestroy(Dlist.data()+ii); CHKERRQ(ierr);
+    ierr = VecDestroy(OPx.data()+ii); CHKERRQ(ierr);
+    ierr = VecDestroyVecs(Qsize, QMatP.data()+ii); CHKERRQ(ierr);
   }
-  //ierr = MatDestroy(&AmsB_main); CHKERRQ(ierr);
-  ierr = MatDestroy(&AmsB); CHKERRQ(ierr);
   ierr = VecDestroy(&x_end); CHKERRQ(ierr); ierr = VecDestroy(&f_end); CHKERRQ(ierr);
   Q.resize(0);
 
@@ -923,7 +929,7 @@ PetscErrorCode JDMG::MG(Vec x, Vec f, PetscScalar fnorm)
   ierr = MatAXPY(AmsB_main, -sigma, B.back(), SUBSET_NONZERO_PATTERN); CHKERRQ(ierr);*/
   // MatShift replaces the MatCopy/MatAXPY and SHOULD be more efficient
   ierr = MatShift(); CHKERRQ(ierr);
-  ierr = KSPSetOperators(ksp_coarse, AmsB, AmsB); CHKERRQ(ierr);
+  ierr = KSPSetOperators(ksp_coarse, AmsB.back(), AmsB.back()); CHKERRQ(ierr);
   ierr = KSPSetUp(ksp_coarse); CHKERRQ(ierr);
   PC pc, sub_pc; KSP *sub_ksp;
   PetscInt blocks, first;
@@ -992,12 +998,20 @@ PetscErrorCode JDMG::MG(Vec x, Vec f, PetscScalar fnorm)
 }
 
 /******************************************************************************/
-/***               Setting up matrix for coarse scale solver                 **/
+/**                    Subtracting matrices at each level                    **/
 /******************************************************************************/
 PetscErrorCode JDMG::MatShift()
 {
   PetscErrorCode ierr;
 
+  for (int level = 0; level < levels-1; level++)
+  {
+    ierr = MatZeroEntries(AmsB[level]); CHKERRQ(ierr);
+    ierr = MatCopy(Acopy[level], AmsB[level], SAME_NONZERO_PATTERN); CHKERRQ(ierr);
+    ierr = MatAXPY(AmsB[level], -sigma, Bcopy[level], SAME_NONZERO_PATTERN); CHKERRQ(ierr);
+  }
+
+  // Coarse level is a whole lot more work
   PetscInt rstart = 0, rend = 0, nzA, nzB;
   const PetscInt *cworkA, *cworkB;
   const PetscScalar *vworkA, *vworkB;
@@ -1043,13 +1057,13 @@ PetscErrorCode JDMG::MatShift()
     }
 
     // Insert into matrix
-    ierr = MatSetValues(AmsB, 1, &ii, allVals.size(), allCols.data(),
+    ierr = MatSetValues(AmsB.back(), 1, &ii, allVals.size(), allCols.data(),
         allVals.data(), INSERT_VALUES); CHKERRQ(ierr);
     ierr = MatRestoreRow(A.back(), ii, &nzA, &cworkA, &vworkA); CHKERRQ(ierr);
     ierr = MatRestoreRow(B.back(), ii, &nzB, &cworkB, &vworkB); CHKERRQ(ierr);
   }
-  ierr = MatAssemblyBegin(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = MatAssemblyEnd(AmsB, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyBegin(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(AmsB.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
   return 0;
 }
@@ -1110,13 +1124,14 @@ PetscErrorCode JDMG::ApplyOP(Vec* QMatP, ArrayPS &QMatQ, Vec x, Vec y, PetscInt 
   MPI_Iallreduce(MPI_IN_PLACE, QMatPx.data(), nev_conv+1, MPI_DOUBLE,
                 MPI_SUM, comm, &request2);
 
-  Vec y2;
-  ierr = VecDuplicate(y, &y2); CHKERRQ(ierr);
+  //Vec y2;
+  //ierr = VecDuplicate(y, &y2); CHKERRQ(ierr);
 
   // Term 1
-  ierr = MatMult(A[level], x, y); CHKERRQ(ierr);
-  ierr = MatMult(B[level], x, y2); CHKERRQ(ierr);
-  ierr = VecAXPY(y, -sigma, y2); CHKERRQ(ierr);
+  //ierr = MatMult(A[level], x, y); CHKERRQ(ierr);
+  //ierr = MatMult(B[level], x, y2); CHKERRQ(ierr);
+  ierr = MatMult(AmsB[level], x, y); CHKERRQ(ierr);
+  //ierr = VecAXPY(y, -sigma, y2); CHKERRQ(ierr);
 
   // Term 2
   MPI_Wait(&request1, MPI_STATUS_IGNORE);
@@ -1128,7 +1143,7 @@ PetscErrorCode JDMG::ApplyOP(Vec* QMatP, ArrayPS &QMatQ, Vec x, Vec y, PetscInt 
   PQBx += QMatPx;
   PQBx *= -1;
   ierr = VecMAXPY(y, nev_conv+1, PQBx.data(), BQ[level]); CHKERRQ(ierr);
-  VecDestroy(&y2);
+  //VecDestroy(&y2);
 
   return 0;
 }
