@@ -12,7 +12,12 @@ typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 
 int TopOpt::Initialize ( ) // Set up the stiffness matrix and solver context
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(comm, output, "Setting up FEM structures\n"); CHKERRQ(ierr);
+  }
+
   // Number of nodes and number of dof per element
   Eigen::Array<short, -1, 1> NE(element.rows()), DE(element.rows());
   if (regular)
@@ -142,6 +147,7 @@ int TopOpt::Initialize ( ) // Set up the stiffness matrix and solver context
   // Create load vector
   PetscScalar *p_F;
   ierr = VecGetArray(this->F, &p_F); CHKERRQ(ierr);
+
   for (long i = 0 ; i < loads.rows(); i++)
   {
     for (short j = 0; j < numDims; j++)
@@ -190,7 +196,7 @@ int TopOpt::Initialize ( ) // Set up the stiffness matrix and solver context
   ierr = KSPCreate(comm, &KUF); CHKERRQ(ierr);
   ierr = KSPSetType(KUF, KSPGMRES); CHKERRQ(ierr);
   ierr = KSPSetInitialGuessNonzero(this->KUF, PETSC_FALSE); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(KUF, 1e-8, PETSC_DEFAULT, PETSC_DEFAULT, 1e3); CHKERRQ(ierr);
+  //ierr = KSPSetTolerances(KUF, 1e-8, PETSC_DEFAULT, PETSC_DEFAULT, 1e3); CHKERRQ(ierr);
   ierr = KSPSetOptionsPrefix(KUF, "kuf_"); CHKERRQ(ierr);
   ierr = KSPSetFromOptions(KUF); CHKERRQ(ierr);
   // Set Preconditioner
@@ -218,11 +224,16 @@ int TopOpt::Initialize ( ) // Set up the stiffness matrix and solver context
   return 0;
 }
 /*****************************************************/
-/**              Solve the FEM problem              **/
+/**            Set up the linear system             **/
 /*****************************************************/
-int TopOpt::FESolve( )
+int TopOpt::FEAssemble( )
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(comm, output, "Assembling Stiffness matrix\n"); CHKERRQ(ierr);
+  }
+
   // Grab element stiffnesses;
   const PetscScalar *p_E;
   ierr = VecGetArrayRead(this->E, &p_E); CHKERRQ(ierr);
@@ -267,14 +278,27 @@ int TopOpt::FESolve( )
   // Set operators
   ierr = KSPSetOperators(this->KUF, this->K, this->K); CHKERRQ(ierr);
 
-  // Solve
+  return ierr;
+}
+/*****************************************************/
+/**              Solve the FEM problem              **/
+/*****************************************************/
+int TopOpt::FESolve( )
+{
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(comm, output, "Solving governing pde\n"); CHKERRQ(ierr);
+  }
+
+  // Get the precondtioner and make modifications if necessary
   PC pc; KSPType ksptype; PCType pctype;
   ierr = KSPGetType(KUF, &ksptype); CHKERRQ(ierr);
   ierr = KSPGetPC(KUF, &pc); CHKERRQ(ierr);
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
   if (this->verbose >= 2)
   {
-    ierr = PetscPrintf(comm, "Solving governing PDE with %s solver using %s preconditioning\n",
+    ierr = PetscFPrintf(comm, output, "Solving governing PDE with %s solver using %s preconditioning\n",
                        ksptype, pctype); CHKERRQ(ierr);
   }
   // Some extra work to do for multigrid preconditioners
@@ -342,7 +366,7 @@ int TopOpt::FESolve( )
     }
     if (this->verbose >= 2)
     {
-      PetscPrintf(comm, "Multigrid preconditioning is using %s smoothing with %s preconditioning\n",
+      PetscFPrintf(comm, output, "Multigrid preconditioning is using %s smoothing with %s preconditioning\n",
                   smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
     }
   }
@@ -354,13 +378,13 @@ int TopOpt::FESolve( )
   {
     if (reason < 0)
     {
-      PetscPrintf(comm, "Solve for displacements failed, reason: %i\n", reason);
+      PetscFPrintf(comm, output, "Solve for displacements failed, reason: %i\n", reason);
     }
     else
     {
       PetscInt its;
       ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
-      ierr = PetscPrintf(comm, "Solve for displacements converged in %i iterations with reason: %i\n",
+      ierr = PetscFPrintf(comm, output, "Solve for displacements converged in %i iterations with reason: %i\n",
                          its, reason); CHKERRQ(ierr);
     }
   }
@@ -403,7 +427,12 @@ Eigen::MatrixXd TopOpt::LocalK ( PetscInt el )
 /*****************************************************/
 int TopOpt::MatIntFnc( const Eigen::VectorXd &y )
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
+  }
+
   double eps = 1e-4; // Minimum stiffness
   double *p_x, *p_rho, *p_V, *p_E, *p_Es, /**p_dVdy,*/ *p_dEdy, *p_dEsdy; // Pointers
 

@@ -263,7 +263,7 @@ namespace Functions
     /********************************************************************/
     int DiagMassFnc( TopOpt *topOpt, Mat &M, Eigen::VectorXd &dMdy )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
 
     // Initialize M
     ierr = MatCreate(topOpt->comm, &M); CHKERRQ(ierr);

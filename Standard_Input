@@ -1,28 +1,32 @@
 [Params]
     Dimensions: 0, 1, 0, 1
-    NEL: 10, 10 
+    NEL: 300, 300
     E0: 15e9
     Nu0: 0.3
     Density: 1900
-    Penalty: 3, 0.5, 4
+    Penalty: 1, 0.5, 4
 
     Min_Iterations: 5
-    Max_Iterations: 40
+    Max_Iterations: 30
     KKT_Limit: 1e-8
     Change_Limit: 0.001
     Step_Limit: 0.05
 
     RFactor: 1.5
-    Normalization
-    MG_Levels 4
+    MG_Coarse_Size 100
+
 [/Params]
 [Domain]
 [/Domain]
-[Functions]
+[/Functions]
   Compliance
     Objective
-    Values: 0.78
-    Range: 0.025331, 253.3071
+    Values: 1
+    Range: 0, 1
+  Volume
+    Constraint
+    Values: 0.5
+    Range: 0, 1
   Volume
     Objective
     Values: 0.018
@@ -36,22 +40,22 @@
     Nev: 1
     Values: 0.02
     Range: 1.8e-4, 0.176021
-[/Functions]
+[Functions]
   Frequency
     Objective
     Nev: 1
     Values: 1
-    Range: 7.64e-14, 3.41e-9
+    Range: 0, 1
 [/Functions]
 [BC]
   Support
     Center: 0.5, 0.0
-    Radius: 0.6, 1e-10
+    Radius: 0.45, 1e-10
     Limits: -10, 10, -10, 10
     Values: 1, 1
   Load
     Center: 0.5, 1.0
-    Radius: 0.6, 1e-10
+    Radius: 0.45, 1e-10
     Limits: -10, 10, -10, 10
     Values: 0, -100
 [/BC]

@@ -13,6 +13,12 @@
 
 using namespace std;
 
+extern PetscLogEvent JDMG_Initialize, JDMG_Prep, JDMG_Convergence, JDMG_Expand, JDMG_Update;
+extern PetscLogEvent JDMG_Comp_Init, JDMG_Hierarchy, JDMG_Setup_Coarse, JDMG_Comp_Coarse;
+extern PetscLogEvent JDMG_MGSetUp, JDMG_Precondition, JDMG_Jacobi, *JDMG_ApplyOP;
+extern PetscLogEvent *JDMG_ApplyOP1, *JDMG_ApplyOP2, *JDMG_ApplyOP3, *JDMG_ApplyOP4;
+extern PetscLogStage stage_JD, stage_JDMG;
+
 static char help[] = "The topology optimization routine we deserve, but not the one we need right now.\n\n";
 
 int MeshOut ( TopOpt *topOpt );
@@ -23,8 +29,22 @@ int main(int argc, char **args)
 {
     /// MPI Variables
     int myid, nproc;
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     SlepcInitialize(&argc,&args,(char*)0,help);
+    ierr = PetscLogEventRegister("JDMG_Initialize", 0, &JDMG_Initialize); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Prep", 0, &JDMG_Prep); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Comp_Init", 0, &JDMG_Comp_Init); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Hierachy", 0, &JDMG_Hierarchy); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Setup_Coarse", 0, &JDMG_Setup_Coarse); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Comp_Coarse", 0, &JDMG_Comp_Coarse); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Convergence", 0, &JDMG_Convergence); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Expand", 0, &JDMG_Expand); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Update", 0, &JDMG_Update); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_MGSetUp", 0, &JDMG_MGSetUp); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Precondition", 0, &JDMG_Precondition); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("JDMG_Jacobi", 0, &JDMG_Jacobi); CHKERRQ(ierr);
+    ierr = PetscLogStageRegister("JD", &stage_JD); CHKERRQ(ierr);
+    ierr = PetscLogStageRegister("JDMG", &stage_JDMG); CHKERRQ(ierr);
     MPI_Comm Opt_Comm = MPI_COMM_WORLD;
     MPI_Comm_rank(Opt_Comm, &myid);
     MPI_Comm_size(Opt_Comm, &nproc);
@@ -33,6 +53,9 @@ int main(int argc, char **args)
     TopOpt * topOpt = new TopOpt;
     MMA * optmma = new MMA;
     optmma->Set_Comm(Opt_Comm);
+
+    // Open file for outputs
+    ierr = PetscFOpen(topOpt->comm, "Output.txt", "w", &topOpt->output); CHKERRQ(ierr);
 
     /// Input Parameters
     topOpt->filename = "Standard_Input";
@@ -46,34 +69,56 @@ int main(int argc, char **args)
     double R;
 
     bool Normalization = false, Reorder_Mesh = true;
-    int mg_levels = 1;
-    topOpt->Def_Param(optmma, topOpt, Dimensions, Nel, R, Normalization, Reorder_Mesh, mg_levels);
+    PetscInt mg_levels = 2, min_size = -1;
+    topOpt->Def_Param(optmma, topOpt, Dimensions, Nel, R, Normalization,
+                      Reorder_Mesh, mg_levels, min_size);
+    mg_levels = max(mg_levels, 2);
     topOpt->Set_Funcs();
 
-    /// Domain and Boundary Conditions
-    ierr = topOpt->CreateMesh(topOpt, Dimensions, Nel, R, Reorder_Mesh, mg_levels); CHKERRQ(ierr);
-    
-    /// Revaluate number of elements and size in each dimension
-    Eigen::VectorXd newDims(2*topOpt->numDims);
-    for (int i = 0; i < topOpt->numDims; i++)
+    /// Domain, Boundary Conditions, and initial design variables
+    Eigen::VectorXd xIni;
+    if (topOpt->folder.length() > 0)
     {
-      newDims(i) = topOpt->node.col(i).minCoeff();
-      newDims(topOpt->numDims+i) = topOpt->node.col(i).maxCoeff();
+      ierr = topOpt->LoadMesh(xIni); CHKERRQ(ierr);
     }
-    MPI_Allreduce(MPI_IN_PLACE, newDims.data(), topOpt->numDims,
-                  MPI_DOUBLE, MPI_MIN, Opt_Comm);
-    MPI_Allreduce(MPI_IN_PLACE, newDims.data()+topOpt->numDims,
-                  topOpt->numDims, MPI_DOUBLE, MPI_MAX, Opt_Comm);
-    for (int i = 0; i < topOpt->numDims; i++)
-      Nel(i) *= (newDims(topOpt->numDims+i)-newDims(i))/(Dimensions(2*i+1)-Dimensions(2*i));
-    topOpt->Def_BC();
+    else
+    {
+      ierr = topOpt->CreateMesh(Dimensions, Nel, R, Reorder_Mesh, 
+                                mg_levels, min_size); CHKERRQ(ierr);
+      topOpt->Def_BC();
+      xIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
+      topOpt->penal = topOpt->pmin;
+    }
 
+JDMG_ApplyOP  = new PetscLogEvent[mg_levels-1];
+JDMG_ApplyOP1 = new PetscLogEvent[mg_levels-1];
+JDMG_ApplyOP2 = new PetscLogEvent[mg_levels-1];
+JDMG_ApplyOP3 = new PetscLogEvent[mg_levels-1];
+JDMG_ApplyOP4 = new PetscLogEvent[mg_levels-1];
+for (int i = 0; i < mg_levels-1; i++)
+{
+  char event_name[30];
+  int size;
+  MPI_Comm_size(topOpt->MG_comms[i], &size);
+  sprintf(event_name, "JDMG_ApplyOP_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP+i); CHKERRQ(ierr);
+  sprintf(event_name, "JDMG_ApplyOP1_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP1+i); CHKERRQ(ierr);
+  sprintf(event_name, "JDMG_ApplyOP2_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP2+i); CHKERRQ(ierr);
+  sprintf(event_name, "JDMG_ApplyOP3_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP3+i); CHKERRQ(ierr);
+  sprintf(event_name, "JDMG_ApplyOP4_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP4+i); CHKERRQ(ierr);
+}
+
+    // Write out the mesh to file
     MeshOut( topOpt );
+
     /// Design Variable Initialization
     optmma->Set_Lower_Bound( Eigen::VectorXd::Constant(topOpt->nLocElem, 0) );
     optmma->Set_Upper_Bound( Eigen::VectorXd::Ones(topOpt->nLocElem) );
-    Eigen::VectorXd zIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
-    optmma->Set_Init_Values( zIni );
+    optmma->Set_Init_Values( xIni );
     optmma->Set_n( topOpt->nLocElem );
 
     /// Optimize
@@ -82,40 +127,59 @@ int main(int argc, char **args)
     double f;
     Eigen::VectorXd dfdx, g;
     Eigen::MatrixXd dgdx;
-    FILE *values;
-    ierr = PetscFOpen(topOpt->comm, "Values.txt", "w", &values); CHKERRQ(ierr);
-    ierr = PetscFClose(topOpt->comm, values); CHKERRQ(ierr);
 
-    for ( topOpt->penal = topOpt->pmin; topOpt->penal <= topOpt->pmax; topOpt->penal += topOpt->pstep )
+    for ( ; topOpt->penal <= topOpt->pmax; topOpt->penal += topOpt->pstep )
     {
-      ierr = PetscFOpen(topOpt->comm, "Values.txt", "a", &values); CHKERRQ(ierr);
-      ierr = PetscFPrintf(topOpt->comm, values, "\nPenalty increased to %1.3g\n",
+      ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\nPenalty increased to %1.3g\n",
                   topOpt->penal); CHKERRQ(ierr);
-      ierr = PetscFClose(topOpt->comm, values); CHKERRQ(ierr);
 
       optmma->Set_It(0);
       topOpt->MatIntFnc( optmma->Get_x() );
       ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      topOpt->FESolve();
+      if (topOpt->Comp || topOpt->Stab || topOpt->Dyn)
+      {
+        ierr = topOpt->FEAssemble(); CHKERRQ(ierr);
+      }
+      if (topOpt->Comp || topOpt->Stab)
+      {
+        ierr = topOpt->FESolve(); CHKERRQ(ierr);
+      }
       ierr = PetscLogEventEnd(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = Functions::FunctionCall( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       StepOut(topOpt, f, g, optmma->Get_it());
 
+ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
+    delete topOpt;
+    delete optmma;
+    delete[] JDMG_ApplyOP3;
+
+    ierr = SlepcFinalize(); CHKERRQ(ierr);
+
+    return ierr;
       do
       {
         ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         optmma->Update( dfdx, g, dgdx );
-        ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
+        ierr = PetscLogEventEnd(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         topOpt->MatIntFnc( optmma->Get_x() );
         ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        topOpt->FESolve();
+        if (topOpt->Comp || topOpt->Stab || topOpt->Dyn)
+        {
+          ierr = topOpt->FEAssemble(); CHKERRQ(ierr);
+        }
+        if (topOpt->Comp || topOpt->Stab)
+        {
+          ierr = topOpt->FESolve(); CHKERRQ(ierr);
+        }
         ierr = PetscLogEventEnd(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         ierr = Functions::FunctionCall( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
+
         StepOut(topOpt, f, g, optmma->Get_it());
+
       } while ( !optmma->Check() );
 
       /// Print result after this penalization
@@ -126,27 +190,28 @@ int main(int argc, char **args)
     if (Normalization)
     {
       double value; double *grad = NULL;
-      PetscPrintf(topOpt->comm, "***Final Values***\n");
+      PetscFPrintf(topOpt->comm, topOpt->output, "***Final Values***\n");
 
       ierr = Functions::Compliance( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscPrintf(topOpt->comm, "\tCompliance: %1.12g\n", value);
+      PetscFPrintf(topOpt->comm, topOpt->output, "\tCompliance: %1.12g\n", value);
 
       ierr = Functions::Perimeter( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscPrintf(topOpt->comm, "\tPerimeter: %1.12g\n", value);
+      PetscFPrintf(topOpt->comm, topOpt->output, "\tPerimeter: %1.12g\n", value);
 
       ierr = Functions::Volume( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscPrintf(topOpt->comm, "\tVolume: %1.12g\n", value);
+      PetscFPrintf(topOpt->comm, topOpt->output, "\tVolume: %1.12g\n", value);
 
       PetscInt nevals = 1;
       ierr = Functions::Buckling( topOpt, &value, grad, nevals ); CHKERRQ(ierr);
-      PetscPrintf(topOpt->comm, "\tBuckling: %1.12g\n", value);
+      PetscFPrintf(topOpt->comm, topOpt->output, "\tBuckling: %1.12g\n", value);
 
       nevals = 1;
       ierr = Functions::Dynamic( topOpt, &value, grad, nevals ); CHKERRQ(ierr);
-      PetscPrintf(topOpt->comm, "\tFrequency: %1.12g\n", value);
+      PetscFPrintf(topOpt->comm, topOpt->output, "\tFrequency: %1.12g\n", value);
     }
 
     /// Wrap up and finish
+    ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
     delete topOpt;
     delete optmma;
 
@@ -157,123 +222,238 @@ int main(int argc, char **args)
 
 int MeshOut ( TopOpt *topOpt )
 {
-  stringstream strmid;
-  strmid << topOpt->myid;
+  ofstream file;
+  if (topOpt->myid == 0)
+  {
+    file.open("Element_Distribution.bin", ios::binary);
+    file.write((char*)topOpt->elmdist.data(), topOpt->elmdist.size()*sizeof(PetscInt));
+    file.close();
+    file.open("Node_Distribution.bin", ios::binary);
+    file.write((char*)topOpt->nddist.data(), topOpt->nddist.size()*sizeof(PetscInt));
+    file.close();
+  }
 
-  string filename = "elements" + strmid.str() + ".bin";
-  ofstream file(filename.c_str(), ios::binary);
+  // Getting distribution of edges, loads, supports, springs, and masses
+  int edgedist = topOpt->edgeElem.rows(), loaddist = topOpt->loadNode.rows();
+  int suppdist = topOpt->suppNode.rows(), springdist = topOpt->springNode.rows();
+  int massdist = topOpt->massNode.rows();
+  MPI_Request edgereq, loadreq, suppreq, springreq, massreq;
+  MPI_Iscan(MPI_IN_PLACE, &edgedist, 1, MPI_INT, MPI_SUM, topOpt->comm, &edgereq);
+  MPI_Iscan(MPI_IN_PLACE, &loaddist, 1, MPI_INT, MPI_SUM, topOpt->comm, &loadreq);
+  MPI_Iscan(MPI_IN_PLACE, &suppdist, 1, MPI_INT, MPI_SUM, topOpt->comm, &suppreq);
+  MPI_Iscan(MPI_IN_PLACE, &springdist, 1, MPI_INT, MPI_SUM, topOpt->comm, &springreq);
+  MPI_Iscan(MPI_IN_PLACE, &massdist, 1, MPI_INT, MPI_SUM, topOpt->comm, &massreq);
+
+  MPI_File fh;
+  int myid = topOpt->myid, nprocs = topOpt->nprocs;
+  Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> global_int;
+  Eigen::Array<double, -1, -1, Eigen::RowMajor> global_float;
+  // Writing element array
+  MPI_File_open(topOpt->comm, "elements.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY | 
+                                              MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "elements.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, topOpt->elmdist(myid)*topOpt->element.cols()*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->nLocElem, topOpt->element.cols());
   for (int el = 0; el < topOpt->nLocElem; el++)
   {
     for (int nd = 0; nd < topOpt->element.cols(); nd++)
-      file.write((char*)(topOpt->gNode.data()+topOpt->element(el,nd)), sizeof(PetscInt));
+      global_int(el,nd) = topOpt->gNode(topOpt->element(el,nd)); 
   }
-  file.close();
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
 
-  filename = "nodes" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->node.data(), topOpt->nLocNode*topOpt->node.cols()*sizeof(double));
-  file.close();
+  // Writing node array
+  MPI_File_open(topOpt->comm, "nodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY | 
+                                           MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "nodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, topOpt->nddist(myid)*topOpt->node.cols()*sizeof(double), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->node.data(), topOpt->nLocNode*topOpt->node.cols(), MPI_DOUBLE, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
 
-  filename = "edges" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
+  // Writing edge array
+  MPI_File_open(topOpt->comm, "edges.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY | 
+                                           MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "edges.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_Wait(&edgereq, MPI_STATUS_IGNORE);
+  edgedist -= topOpt->edgeElem.rows();
+  MPI_File_seek(fh, edgedist*2*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->edgeElem.rows(), 2);
   for (int el = 0; el < topOpt->edgeElem.rows(); el++)
   {
+    global_int(el, 0) = topOpt->gElem(topOpt->edgeElem(el,0));
     if (topOpt->edgeElem(el,1) < topOpt->gElem.size())
-    {
-      file.write((char*)(topOpt->gElem.data()+topOpt->edgeElem(el,0)), sizeof(PetscInt));
-      file.write((char*)(topOpt->gElem.data()+topOpt->edgeElem(el,1)), sizeof(PetscInt));
-    }
+
+      global_int(el, 1) = topOpt->gElem(topOpt->edgeElem(el,1));
     else
+      global_int(el, 1) = topOpt->nElem;
+  }
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing edge length array
+  MPI_File_open(topOpt->comm, "edgeLengths.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY | 
+                                                 MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "edgeLengths.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, edgedist*sizeof(double), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->edgeSize.data(), topOpt->edgeSize.size(), MPI_DOUBLE, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing load node array
+  MPI_File_open(topOpt->comm, "loadNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY | 
+                                               MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "loadNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_Wait(&loadreq, MPI_STATUS_IGNORE);
+  loaddist -= topOpt->loadNode.rows();
+  MPI_File_seek(fh, loaddist*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->loadNode.rows(), 1);
+  for (int i = 0; i < topOpt->loadNode.size(); i++)
+    global_int(i, 0) = topOpt->gNode(topOpt->loadNode(i));
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing loads array
+  MPI_File_open(topOpt->comm, "loads.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                                 MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "loads.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, loaddist*topOpt->loads.cols()*sizeof(double), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->loads.data(), topOpt->loads.size(), MPI_DOUBLE, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing support node array
+  MPI_File_open(topOpt->comm, "supportNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                               MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "supportNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_Wait(&suppreq, MPI_STATUS_IGNORE);
+  suppdist -= topOpt->suppNode.rows();
+  MPI_File_seek(fh, suppdist*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->suppNode.rows(), 1);
+  for (int i = 0; i < topOpt->suppNode.size(); i++)
+    global_int(i, 0) = topOpt->gNode(topOpt->suppNode(i));
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing supports array
+  MPI_File_open(topOpt->comm, "supports.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                                 MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "supports.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, suppdist*topOpt->supports.cols()*sizeof(bool), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->supports.data(), topOpt->supports.size(), MPI::BOOL, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing spring node array
+  MPI_File_open(topOpt->comm, "springNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                               MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "springNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_Wait(&springreq, MPI_STATUS_IGNORE);
+  springdist -= topOpt->springNode.rows();
+  MPI_File_seek(fh, springdist*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->springNode.rows(), 1);
+  for (int i = 0; i < topOpt->springNode.size(); i++)
+    global_int(i, 0) = topOpt->gNode(topOpt->springNode(i));
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing springs array
+  MPI_File_open(topOpt->comm, "springs.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                                 MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "springs.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, springdist*topOpt->springs.cols()*sizeof(double), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->springs.data(), topOpt->springs.size(), MPI_DOUBLE, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing mass node array
+  MPI_File_open(topOpt->comm, "massNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                               MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "massNodes.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_Wait(&massreq, MPI_STATUS_IGNORE);
+  massdist -= topOpt->massNode.rows();
+  MPI_File_seek(fh, massdist*sizeof(PetscInt), MPI_SEEK_SET);
+  global_int.resize(topOpt->massNode.rows(), 1);
+  for (int i = 0; i < topOpt->massNode.size(); i++)
+    global_int(i, 0) = topOpt->gNode(topOpt->massNode(i));
+  MPI_File_write_all(fh, global_int.data(), global_int.size(), MPI_PETSCINT, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing masses array
+  MPI_File_open(topOpt->comm, "masses.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY |
+                                                 MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+  MPI_File_close(&fh);
+  MPI_File_open(topOpt->comm, "masses.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+  MPI_File_seek(fh, massdist*topOpt->masses.cols()*sizeof(double), MPI_SEEK_SET);
+  MPI_File_write_all(fh, topOpt->masses.data(), topOpt->masses.size(), MPI_DOUBLE, MPI_STATUS_IGNORE);
+  MPI_File_close(&fh);
+
+  // Writing filter
+  PetscErrorCode ierr;
+  PetscViewer view;
+  ierr = PetscViewerBinaryOpen(topOpt->comm, "Filter.bin", FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+  ierr = MatView(topOpt->P, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+
+  // Writing projecting matrices
+  ArrayXPI lcol(topOpt->nprocs);
+  for (unsigned int i = 0; i < topOpt->PR.size(); i++)
+  {
+    stringstream level; level << i;
+    string filename = "P" + level.str() + ".bin";
+    ierr = PetscViewerBinaryOpen(topOpt->comm, filename.c_str(), FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+    ierr = MatView(topOpt->PR[i], view); CHKERRQ(ierr);
+    ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+    ierr = MatGetLocalSize(topOpt->PR[i], NULL, lcol.data()+topOpt->myid); CHKERRQ(ierr);
+    MPI_Allgather(MPI_IN_PLACE, 1, MPI_PETSCINT, lcol.data(), 1, MPI_PETSCINT, topOpt->comm);
+    if (topOpt->myid == 0)
     {
-      file.write((char*)(topOpt->gElem.data()+topOpt->edgeElem(el,0)), sizeof(PetscInt));
-      file.write((char*)&topOpt->nElem, sizeof(PetscInt));
+      filename += ".split";
+      file.open(filename.c_str(), ios::binary);
+      file.write((char*)lcol.data(), lcol.size()*sizeof(PetscInt));
+      file.close();
     }
   }
-  file.close();
-  filename = "edgeLengths" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->edgeSize.data(), topOpt->edgeElem.rows()*sizeof(double));
-  file.close();
-
-  filename = "loadNodes" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  for (int i = 0; i < topOpt->loadNode.size(); i++)
-    file.write((char*)(topOpt->gNode.data()+topOpt->loadNode(i)), sizeof(PetscInt));
-  file.close();
-  filename = "loads" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->loads.data(), topOpt->loads.size()*sizeof(double));
-  file.close();
-
-  filename = "supportNodes" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  for (int i = 0; i < topOpt->suppNode.size(); i++)
-    file.write((char*)(topOpt->gNode.data()+topOpt->suppNode(i)), sizeof(PetscInt));
-  file.close();
-  filename = "supports" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->supports.data(), topOpt->supports.size()*sizeof(bool));
-  file.close();
-
-  filename = "springNodes" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  for (int i = 0; i < topOpt->springNode.size(); i++)
-    file.write((char*)(topOpt->gNode.data()+topOpt->springNode(i)), sizeof(PetscInt));
-  file.close();
-  filename = "springs" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->springs.data(), topOpt->springs.size()*sizeof(double));
-  file.close();
-
-  filename = "massNodes" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  for (int i = 0; i < topOpt->massNode.size(); i++)
-    file.write((char*)(topOpt->gNode.data()+topOpt->massNode(i)), sizeof(PetscInt));
-  file.close();
-  filename = "masses" + strmid.str() + ".bin";
-  file.open(filename.c_str(), ios::binary);
-  file.write((char*)topOpt->masses.data(), topOpt->masses.size()*sizeof(double));
-  file.close();
-
+  
   return 0;
 }
 
 int StepOut ( TopOpt *topOpt, const double &f, const Eigen::VectorXd &cons, int it )
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
 
-  FILE *values;
-  ierr = PetscFOpen(topOpt->comm, "Values.txt", "a", &values); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, "Iteration number: %u\tObjective: %1.6g\n",
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Iteration number: %u\tObjective: %1.6g\n",
               it, f); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, "Constraints:\n"); CHKERRQ(ierr);
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Constraints:\n"); CHKERRQ(ierr);
   for (short i = 0; i < cons.size(); i++)
   {
-    ierr = PetscFPrintf(topOpt->comm, values, "%1.12g\t", cons(i)); CHKERRQ(ierr);
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.12g\t", cons(i)); CHKERRQ(ierr);
   }
-  ierr = PetscFPrintf(topOpt->comm, values, "\n\n"); CHKERRQ(ierr);
-  ierr = PetscFClose(topOpt->comm, values); CHKERRQ(ierr);
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\n\n"); CHKERRQ(ierr);
 
   return 0;
 }
 
 int ResultOut ( TopOpt *topOpt, int it )
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
 
   // Output a ratio of stiffness to volume
   PetscScalar Esum, Vsum;
   ierr = VecSum(topOpt->E, &Esum); CHKERRQ(ierr);
   ierr = VecSum(topOpt->V, &Vsum); CHKERRQ(ierr);
-  FILE *values;
-  ierr = PetscFOpen(topOpt->comm, "Values.txt", "a", &values); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, "*********************************************\n");
-  ierr = PetscFPrintf(topOpt->comm, values, "After %4i iterations with a penalty of %5.4g the\n",
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "************************************************\n");
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "After %4i iterations with a penalty of %1.4g the\n",
               it, topOpt->penal); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, "ratio of stiffness sum to volume sum is %5.4g\n",
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "ratio of stiffness sum to volume sum is %1.4g\n",
               Esum/Vsum); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, values, "*********************************************\n\n");
-  ierr = PetscFClose(topOpt->comm, values); CHKERRQ(ierr);
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "************************************************\n\n");
 
   stringstream pen;
   pen << topOpt->penal;

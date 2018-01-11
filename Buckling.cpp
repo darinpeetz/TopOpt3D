@@ -16,7 +16,7 @@ namespace Functions
 
   int Buckling( TopOpt *topOpt, double *lambda, double *grad, PetscInt &nevals )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
 
     /// Assemble stress stiffness matrix and get sensitivity information
@@ -41,26 +41,29 @@ namespace Functions
     /// Create JDMG instance
     JDMG jdmg(topOpt->comm);
     jdmg.Set_Verbose(topOpt->verbose);
+    jdmg.Set_File(topOpt->output);
     // Get restrictors from FEM problem
     PC pcmg; PCType pctype;
     ierr = KSPGetPC(topOpt->KUF, &pcmg); CHKERRQ(ierr);
     ierr = PCGetType(pcmg, &pctype); CHKERRQ(ierr);
-    if (!strcmp(pctype,PCMG))
-    {
+    /*if (!strcmp(pctype,PCMG))
+    {*/
       ierr = jdmg.Set_Hierarchy(topOpt->PR); CHKERRQ(ierr);
-    }
+    /*}
     else if (!strcmp(pctype,PCGAMG))
     {
       ierr = jdmg.PCMG_Extract(pcmg); CHKERRQ(ierr);
     }
     else
-       SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);
+       SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);*/
     // Set Operators
     jdmg.Set_Operators(Ks, topOpt->K);
     // Set target eigenvalues
     Nev_Type target_type = UNIQUE_LAST_NEV;
     jdmg.Set_Target(LR, nevals, UNIQUE_LAST_NEV);
-    jdmg.Set_MaxIt(100*(PetscInt)log(topOpt->nElem));
+    jdmg.Set_MaxIt((nevals+1)*50*(PetscInt)log(topOpt->nElem));
+    jdmg.Set_Cycle(FMGCycle);
+    jdmg.Set_Tol(1e-6);
     // Compute the eigenvalues
     ierr = PetscLogEventBegin(topOpt->JDCompEvent, 0, 0, 0, 0); CHKERRQ(ierr);
     ierr = jdmg.Compute(); CHKERRQ(ierr);
@@ -71,13 +74,14 @@ namespace Functions
     jdmg.Get_nev_conv(nev_conv);
     nev_conv = (target_type == TOTAL_NEV) ? nev_conv : min(nevals, nev_conv);
     jdmg.Get_EigenValues(lambda);
-    
+
     // Return if sensitivities aren't needed
     if (grad == NULL)
       return 0;
 
     Vec *phi, phi_copy;
     jdmg.Get_EigenVectors(&phi);
+
     ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
     for (int i = 0; i < nev_conv; i++)
     {
@@ -147,15 +151,14 @@ namespace Functions
     }
     ierr = VecRestoreArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
 
-    /// Switch to weighted Jacobi smoothing
-    PetscInt levels;
-    ierr = PCMGGetLevels(pcmg, &levels); CHKERRQ(ierr);
-    for (int i = 1; i < levels; i++)
+    PC smooth_pc;
+    KSP smooth_ksp;
+    PetscInt nlevels;
+    /// Switch to weighted Jacobi smoothing 
+    ierr = PCMGGetLevels(pcmg, &nlevels); CHKERRQ(ierr);
+    for (int i = 1; i < nlevels; i++)
     {
-      KSP smooth_ksp;
-      PC smooth_pc;
       ierr = PCMGGetSmoother(pcmg, i, &smooth_ksp); CHKERRQ(ierr);
-      //ierr = KSPSetType(smooth_ksp, KSPCHEBYSHEV); CHKERRQ(ierr);
       ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
       ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
       ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
@@ -178,7 +181,11 @@ namespace Functions
       ierr = KSPGetIterationNumber(topOpt->KUF, &its); CHKERRQ(ierr);
       KSPConvergedReason reason;
       ierr = KSPGetConvergedReason(topOpt->KUF, &reason); CHKERRQ(ierr);
-      ierr = PetscPrintf(topOpt->comm, "Solve for adjoint equation #%i converged in %i iterations with reason: %i\n", i, its, reason); CHKERRQ(ierr);
+      if (topOpt->verbose >= 1)
+      {
+        ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint equation #%i converged in %i iterations with reason: %i\n",
+                            i, its, reason); CHKERRQ(ierr);
+      }
       ierr = VecGhostUpdateBegin(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
       ierr = VecGhostUpdateEnd(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
       ierr = VecResetArray( dKsdU_vec ); CHKERRQ(ierr);
@@ -269,9 +276,9 @@ namespace Functions
 
     if (nev_conv < nevals)
     {
-      PetscPrintf(topOpt->comm, "***************************************************\n");
-      PetscPrintf(topOpt->comm, "Warning, nevals < nev_conv\n");
-      PetscPrintf(topOpt->comm, "***************************************************\n");
+      PetscFPrintf(topOpt->comm, topOpt->output, "***************************************************\n");
+      PetscFPrintf(topOpt->comm, topOpt->output, "Warning, nev_conv < nevals\n");
+      PetscFPrintf(topOpt->comm, topOpt->output, "***************************************************\n");
     }
 
     return 0;
@@ -279,7 +286,7 @@ namespace Functions
 
   int StressFnc( TopOpt *topOpt, Mat &Ks, Eigen::VectorXd &dKsdy )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     // Mesh characteristics
     const short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
     // Track construction of Ks, dKs

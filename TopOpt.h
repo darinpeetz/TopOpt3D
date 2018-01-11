@@ -60,6 +60,8 @@ public:
   int nprocs;                                  //Total number of processes
   std::string filename;                        //Input file name
   int verbose;                                 //How much information to print
+  FILE* output;                                //File for outputing information
+  std::string folder;                          //Location of files for restart
 
   /// Mesh variables
   short numDims;                               //Dimensionality of problem
@@ -109,6 +111,7 @@ public:
   Vec spKVec;                                  //Vector representing diagonal of spring matrix
   Mat K;                                       //Sparse K used to solve fem problem
   std::vector<Mat> PR;                         //Interpolation/Restriction matrices
+  std::vector<MPI_Comm> MG_comms;              //Communicator for each level of MG hierarchy
   std::string smoother;                        //Smoother to use with multigrid preconditioners
   Vec MLump;                                   //Storing point masses
   KSP KUF;                                     //The FEM solver context
@@ -155,7 +158,7 @@ public:
   // Parsing the input file
   void Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
                  ArrayXPI &Nel, double &Rfactor, bool &Normalization,
-                 bool &Reorder_Mesh, int &mg_levels);
+                 bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   void Set_Funcs();
   void Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
               Eigen::Array<bool, -1, 1> &elemValidity);
@@ -182,14 +185,15 @@ public:
   // Mesh Creation
   void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
                    ArrayXPI Nel, FilterArrays &filterArrays );
-  int CreateMesh ( TopOpt *topOpt, Eigen::VectorXd dimensions,
-                    ArrayXPI Nel, double R, bool Reorder_Mesh, int mg_levels );
+  int LoadMesh(Eigen::VectorXd &xIni);
+  int CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel, double R,
+                   bool Reorder_Mesh, PetscInt mg_levels, PetscInt min_size );
   int Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
           ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels );
   int Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
               ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
   int Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                               ArrayXPI *cList, PetscInt mg_levels );
+                               ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
   void Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
   void ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
                     int nInterfaceNodes, FilterArrays &filterArrays,
@@ -203,12 +207,13 @@ public:
   void NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels);
   void Expand_Elem();
   void Expand_Node();
-  void Initialize_Vectors();
+  int Initialize_Vectors();
   void Localize();
 
   // Finite Elements
   int Initialize ( );
   int FESolve ( );
+  int FEAssemble( );
   int MatIntFnc ( const Eigen::VectorXd &y );
 private:
   Eigen::MatrixXd LocalK ( PetscInt el );

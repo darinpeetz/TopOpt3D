@@ -11,7 +11,7 @@ namespace Functions
 {
   int Perimeter( TopOpt *topOpt, double &obj, double *grad )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     obj = 0;
     double Weight;
     const double *p_V;

@@ -19,23 +19,386 @@ typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
 typedef Eigen::Matrix<double,-1,-1,Eigen::RowMajor> MatrixXdRM;
 
 
+/*****************************************************************/
+/**                    Load Mesh for Restart                    **/
+/*****************************************************************/
+int TopOpt::LoadMesh(Eigen::VectorXd &xIni)
+{
+  PetscErrorCode ierr = 0;
 
+  ifstream input;
+  PetscInt filesize = 0;
+  string filename;
+
+  // Read in element distribution
+  filename = folder + "/Element_Distribution.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open element distribution file");
+  filesize = input.tellg();
+  input.seekg(0);
+  elmdist.resize(filesize/sizeof(PetscInt));
+  input.read((char*)elmdist.data(), filesize);
+  input.close();
+
+  // Read in node distribution
+  filename = folder + "/Node_Distribution.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open node distribution file");
+  filesize = input.tellg();
+  input.seekg(0);
+  nddist.resize(filesize/sizeof(PetscInt));
+  input.read((char*)nddist.data(), filesize);
+  input.close();
+
+  // Read in elements
+  filename = folder + "/elements.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open elements file");
+  filesize = input.tellg();
+  SetDimension(log2(filesize/sizeof(PetscInt)/elmdist(elmdist.size()-1)));
+  input.seekg(elmdist(myid)*pow(numDims,2)*sizeof(PetscInt));
+  element.resize(elmdist(myid+1)-elmdist(myid), pow(numDims,2));
+  input.read((char*)element.data(), element.size()*sizeof(PetscInt));
+  input.close();
+
+  // Read in nodes
+  filename = folder + "/nodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open nodes file");
+  filesize = input.tellg();
+  input.seekg(nddist(myid)*numDims*sizeof(PetscScalar));
+  node.resize(nddist(myid+1)-nddist(myid), numDims);
+  input.read((char*)node.data(), node.size()*sizeof(PetscScalar));
+  input.close();
+
+  // Create constitutive matrix
+  switch (this->numDims)
+  {
+    case 1:
+      this->d.resize(1,1);
+      this->d << this->E0;
+      break;
+    case 2:
+      this->d.resize(3,3);
+      this->d << 1, this->Nu0, 0 , this->Nu0, 1, 0 , 0, 0, (1-this->Nu0)/2;
+      this->d = this->E0/(1-this->Nu0*Nu0)*this->d;
+      break;
+    case 3:
+      this->d.resize(6,6);
+      double c = this->E0/((1+this->Nu0)*(1-2*this->Nu0));
+      double G = this->E0/(2*(1+this->Nu0));
+      double t1 = (1-this->Nu0)*c;
+      double t2 = G;
+      double t3 = this->Nu0*c;
+      this->d << t1, t3, t3, 0, 0, 0, t3, t1, t3, 0, 0, 0, t3, t3, t1, 0, 0, 0,
+                0, 0, 0, t2, 0, 0, 0, 0, 0, 0, t2, 0, 0, 0, 0, 0, 0, t2;
+      break;
+  }
+
+  // Read in edge information
+  // First read in all edge element information
+  filename = folder + "/edges.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open edges file");
+  filesize = input.tellg();
+  input.seekg(0);
+  nEdges = filesize/sizeof(PetscInt)/2;
+  ArrayXXPIRM temp_edge(nEdges, 2);
+  input.read((char*)temp_edge.data(), filesize);
+  input.close();
+  // Now find what part is local and extract it
+  PetscInt begin = 0, finish = temp_edge.rows();
+  for (int i = 0; i < temp_edge.rows(); i++)
+  {
+    if (temp_edge(i,0) < elmdist(myid))
+      begin++;
+    if (temp_edge(i,0) >= elmdist(myid+1))
+    {
+      finish = i;
+      break;
+    }
+  }
+  edgeElem = temp_edge.block(begin, 0, finish-begin, 2);
+  // Now get edge lengths
+  filename = folder + "/edgeLengths.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open edge lengths file");
+  filesize = input.tellg();
+  input.seekg(begin*sizeof(PetscScalar));
+  edgeSize.resize(edgeElem.rows());
+  input.read((char*)edgeSize.data(), edgeSize.size()*sizeof(PetscScalar));
+  input.close();
+
+  // Read in BC's
+  // Similar to edge information, have to read it all in and parse it later
+  // Loads first
+  filename = folder + "/loadNodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to load nodes file");
+  filesize = input.tellg();
+  input.seekg(0);
+  ArrayXPI temp_node(filesize/sizeof(PetscInt));
+  input.read((char*)temp_node.data(), filesize);
+  input.close();
+  // Now find what part is local and extract it
+  begin = 0; finish = temp_node.rows();
+  for (int i = 0; i < temp_node.rows(); i++)
+  {
+    if (temp_node(i) < nddist(myid))
+      begin++;
+    if (temp_node(i) >= nddist(myid+1))
+    {
+      finish = i;
+      break;
+    }
+  }
+  loadNode = temp_node.segment(begin, finish-begin) -= nddist(myid);
+  // Now the load quantities
+  filename = folder + "/loads.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open loads file");
+  filesize = input.tellg();
+  input.seekg(begin*sizeof(PetscScalar)*numDims);
+  loads.resize(loadNode.size(), numDims);
+  input.read((char*)loads.data(), loads.size()*sizeof(PetscScalar));
+  input.close();
+
+  // Masses
+  filename = folder + "/massNodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to mass nodes file");
+  filesize = input.tellg();
+  input.seekg(0);
+  temp_node.resize(filesize/sizeof(PetscInt));
+  input.read((char*)temp_node.data(), filesize);
+  input.close();
+  // Now find the local part
+  begin = 0; finish = temp_node.rows();
+  for (int i = 0; i < temp_node.rows(); i++)
+  {
+    if (temp_node(i) < nddist(myid))
+      begin++;
+    if (temp_node(i) >= nddist(myid+1))
+    {
+      finish = i;
+      break;
+    }
+  }
+  massNode = temp_node.segment(begin, finish-begin) -= nddist(myid);
+  // Load the masses
+  filename = folder + "/masses.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open masses file");
+  filesize = input.tellg();
+  input.seekg(begin*sizeof(PetscScalar)*numDims);
+  masses.resize(massNode.size(), numDims);
+  input.read((char*)masses.data(), masses.size()*sizeof(PetscScalar));
+  input.close();
+
+  // Springs
+  filename = folder + "/springNodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to spring nodes file");
+  filesize = input.tellg();
+  input.seekg(0);
+  temp_node.resize(filesize/sizeof(PetscInt));
+  input.read((char*)temp_node.data(), filesize);
+  input.close();
+  // Now find the local part
+  begin = 0; finish = temp_node.rows();
+  for (int i = 0; i < temp_node.rows(); i++)
+  {
+    if (temp_node(i) < nddist(myid))
+      begin++;
+    if (temp_node(i) >= nddist(myid+1))
+    {
+      finish = i;
+      break;
+    }
+  }
+  springNode = temp_node.segment(begin, finish-begin) -= nddist(myid);
+  // Load the springs
+  filename = folder + "/springs.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open springs file");
+  filesize = input.tellg();
+  input.seekg(begin*sizeof(PetscScalar)*numDims);
+  springs.resize(springNode.size(), numDims);
+  input.read((char*)springs.data(), springs.size()*sizeof(PetscScalar));
+  input.close();
+
+  // Fixed Supports
+  filename = folder + "/supportNodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to support nodes file");
+  filesize = input.tellg();
+  input.seekg(0);
+  temp_node.resize(filesize/sizeof(PetscInt));
+  input.read((char*)temp_node.data(), filesize);
+  input.close();
+  // Now find the local part
+  begin = 0; finish = temp_node.rows();
+  for (int i = 0; i < temp_node.rows(); i++)
+  {
+    if (temp_node(i) < nddist(myid))
+      begin++;
+    if (temp_node(i) >= nddist(myid+1))
+    {
+      finish = i;
+      break;
+    }
+  }
+  suppNode = temp_node.segment(begin, finish-begin) -= nddist(myid);
+  // Load the supports
+  filename = folder + "/supports.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open supports file");
+  filesize = input.tellg();
+  input.seekg(begin*sizeof(bool)*numDims);
+  supports.resize(suppNode.size(), numDims);
+  input.read((char*)supports.data(), supports.size()*sizeof(bool));
+  input.close();
+
+  /// Establish Global Numbering
+  nLocElem = elmdist(myid+1)-elmdist(myid);
+  nElem = elmdist(nprocs);
+  gElem = ArrayXPI::LinSpaced(nLocElem, elmdist(myid), elmdist(myid+1)-1);
+  nLocNode = nddist(myid+1)-nddist(myid);
+  nNode = nddist(nprocs);
+  gNode = ArrayXPI::LinSpaced(nLocNode, nddist(myid), nddist(myid+1)-1);
+
+  /// Get any needed ghost information
+  Expand_Elem();
+  Expand_Node();
+
+  /// Assign Ghost Info and create DV vectors
+  Initialize_Vectors();
+
+  /// Local Element Numbering
+  /*edgeElem.col(0) -= elmdist(myid);
+  PetscInt *p_start = gNode.data(), *p_finish = gNode.data()+gNode.size();
+  for (int i = 0; i < edgeElem.rows(); i++)
+  {
+    if (edgeElem(i,1) == nElem)
+      edgeElem(i,1) = gElem.rows();
+    else
+      edgeElem(i,1) = std::find(p_start, p_finish, edgeElem(i,1)) - p_start;
+  }*/
+  Localize();
+
+  // Element sizes
+  double temp = node(element(0,1),0) - node(element(0,0),0);
+  if (numDims > 1)
+    temp *= node(element(0,3),1) - node(element(0,0),1);
+  if (numDims > 2)
+    temp *= node(element(0,7),2) - node(element(0,0),2);
+  elemSize.setConstant(nLocElem, temp);
+  // Perimeter normalization factor
+  PerimNormFactor = 0;
+  PerimNormFactor += elemSize(0)/(node(element(0,1),0) - node(element(0,0),0));
+  if (numDims > 1)
+    PerimNormFactor += elemSize(0)/(node(element(0,3),1) - node(element(0,0),1));
+  if (numDims > 2)
+    PerimNormFactor += elemSize(0)/(node(element(0,7),2) - node(element(0,0),2));
+
+  // Read in the filter matrix
+  PetscViewer view;
+  filename = folder + "/Filter.bin";
+  input.open(filename.c_str(), ios::ate);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open filter file");
+  input.close();
+  ierr = PetscViewerBinaryOpen(comm, filename.c_str(), FILE_MODE_READ, &view);
+  ierr = MatCreate(comm, &this->P); CHKERRQ(ierr);
+  ierr = MatSetType(this->P, MATAIJ); CHKERRQ(ierr);
+  ierr = MatSetSizes(this->P, nLocElem, nLocElem, nElem, nElem); CHKERRQ(ierr);
+  ierr = MatLoad(this->P, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view);
+
+  // Read in the multigrid hierarchy
+  this->PR.resize(0);
+  this->MG_comms.resize(0);
+  this->MG_comms.push_back(comm);
+  PetscInt lrow = 2*nddist(myid+1)-2*nddist(myid), lcol;
+  for (int level = 0; ; level++)
+  {
+    stringstream strmlvl;
+    strmlvl << level;
+    filename = folder + "/P" + strmlvl.str() + ".bin";
+    input.open(filename.c_str(), ios::ate);
+    if (!input.is_open())
+      break;
+    input.close();
+    this->PR.resize(level+1);
+    ierr = PetscViewerBinaryOpen(comm, filename.c_str(), FILE_MODE_READ, &view); CHKERRQ(ierr);
+    ierr = MatCreate(comm, this->PR.data()+level); CHKERRQ(ierr);
+    ierr = MatSetType(this->PR[level], MATAIJ); CHKERRQ(ierr);
+    // Properly set local matrix dimensions
+    filename += ".split";
+    input.open(filename.c_str(), ios::binary);
+    input.seekg(myid*sizeof(PetscInt));
+    input.read((char*)&lcol, sizeof(PetscInt));
+    input.close();
+    ierr = MatSetSizes(this->PR[level], lrow, lcol, PETSC_DETERMINE, PETSC_DETERMINE); CHKERRQ(ierr);
+    ierr = MatLoad(this->PR[level], view); CHKERRQ(ierr);
+    ierr = PetscViewerDestroy(&view);
+    lrow = lcol;
+    this->MG_comms.push_back(comm);
+  }
+                                                                                                     
+  // Initial design values
+  xIni.setOnes(nLocElem); xIni *= 0.5;
+  ierr = VecPlaceArray(this->x, xIni.data()); CHKERRQ(ierr); 
+  for (penal = pmin; penal <= pmax; penal += pstep)
+  {
+    stringstream strmid; strmid << penal;
+    filename = folder + "/x_pen" + strmid.str() + ".bin";
+    input.open(filename.c_str(), ios::binary);
+    if (!input.is_open())
+      break;
+    input.close();
+    ierr = PetscViewerBinaryOpen(comm, filename.c_str(), FILE_MODE_READ, &view); CHKERRQ(ierr);
+    ierr = VecLoad(this->x, view); CHKERRQ(ierr);
+    ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+  }
+  ierr = VecResetArray(this->x); CHKERRQ(ierr);
+
+  // Finally note that the mesh is uniform quadrilaterals
+  regular = true;
+
+  return ierr;
+}
+  
 /*****************************************************************/
 /**                      Create Base Mesh                       **/
 /*****************************************************************/
-int TopOpt::CreateMesh ( TopOpt *topOpt, Eigen::VectorXd dimensions,
-                 ArrayXPI Nel, double R, bool Reorder_Mesh, int mg_levels )
+int TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
+                         double R, bool Reorder_Mesh, int mg_levels, PetscInt min_size )
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
 
-  topOpt->SetDimension(Nel.size());
+  this->SetDimension(Nel.size());
   Nel.conservativeResize(3);
   for (int i = numDims; i < 3; i++)
     Nel(i) = 1;
   regular = 1;
 
   /// Constitutive matrix
-  this->numDims = dimensions.size()/2;
+  this->numDims = dimensions.size()/2; // I think this is redundant to the SetDimensions call above
   switch (this->numDims)
   {
     case 1:
@@ -240,11 +603,11 @@ int TopOpt::CreateMesh ( TopOpt *topOpt, Eigen::VectorXd dimensions,
   double temp = elemSize(0);
   elemSize.setConstant(nLocElem, temp);
 
-  /// Node Distribution and Interpolation assembly
+  /// Node Distribution and Interpolation reordering
   NodeDist(I, J, K, cList, mg_levels);
 
   /// Interpolation matrix assembly
-  ierr = Assemble_Interpolation ( I, J, K, cList, mg_levels );
+  ierr = Assemble_Interpolation ( I, J, K, cList, mg_levels, min_size );
 
   /// Establish Global Numbering
   gElem = ArrayXPI::LinSpaced(this->nLocElem, elmdist(myid), elmdist(myid+1)-1);
@@ -257,7 +620,7 @@ int TopOpt::CreateMesh ( TopOpt *topOpt, Eigen::VectorXd dimensions,
   Expand_Node();
 
   /// Assign Ghost Info and create DV vectors
-  Initialize_Vectors();
+  ierr = Initialize_Vectors(); CHKERRQ(ierr);
 
   /// Local Element Numbering
   Localize();
@@ -1013,14 +1376,12 @@ idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
     std::cout << "Error partitioning matrix! Error code: " << METIS << "\n";
     return METIS;
   }
-  else if (myid == 0)
-    std::cout << "Parmetis reordering successful\n";
     
   ArrayXPI permute;
   ElemDist(filterArrays, partition);
 
   // TODO: Move filter matrix assembly to its own function
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
   /// Assemble the filter matrix
   ierr = MatCreate(comm, &P); CHKERRQ(ierr);
   ierr = MatSetSizes(P, nLocElem, nLocElem, nElem, nElem); CHKERRQ(ierr);
@@ -1540,38 +1901,39 @@ void TopOpt::Expand_Node()
 /*****************************************************************/
 /**       Set up ghost communications for PEtSc vectors         **/
 /*****************************************************************/
-void TopOpt::Initialize_Vectors()
+int TopOpt::Initialize_Vectors()
 {
+    PetscErrorCode ierr;
     // Nodal ghost info
     ArrayXXPIRM ghosts( gNode.size()-nLocNode, numDims );
     ghosts.col(0) = numDims*gNode.segment( nLocNode,gNode.size()-nLocNode );
     for (short i = 1; i < numDims; i++)
       ghosts.col(i) = ghosts.col(i-1) + 1;
 
-    VecCreateGhost( comm, numDims*nLocNode, numDims*nNode, ghosts.size(),
-                    ghosts.data(), &U );
-    VecSet(U, 0.0);
-    VecDuplicate(U, &F);  // Only duplicates structure, not values
-    VecSet(F, 0.0);
+    ierr = VecCreateGhost(comm, numDims*nLocNode, numDims*nNode,
+                          ghosts.size(), ghosts.data(), &U); CHKERRQ(ierr);
+    ierr = VecSet(U, 0.0); CHKERRQ(ierr);
+    ierr = VecDuplicate(U, &F); CHKERRQ(ierr);
+    ierr = VecSet(F, 0.0); CHKERRQ(ierr);
 
     // Eigenvectors
     bucklingShape.setZero(node.size(), Stab_nev);
     dynamicShape.setZero(node.size(), Dyn_nev);
 
     // Element ghost info
-    VecCreateGhost( comm, nLocElem, nElem, gElem.size()-nLocElem,
-                    gElem.data()+nLocElem, &V );
-    VecDuplicate(V, &E);
-    VecDuplicate(V, &Es);
-    VecDuplicate(V, &dVdy);
-    VecDuplicate(V, &dEdy);
-    VecDuplicate(V, &dEsdy);
+    ierr = VecCreateGhost(comm, nLocElem, nElem, gElem.size()-nLocElem,
+                          gElem.data()+nLocElem, &V); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &E); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &Es); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dVdy); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dEdy); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dEsdy); CHKERRQ(ierr);
 
     /// Create design variable and density vectors to work with the filter
-    VecCreateMPI(comm, nLocElem, nElem, &x);
-    VecDuplicate(x, &rho);
+    ierr = VecCreateMPI(comm, nLocElem, nElem, &x); CHKERRQ(ierr);
+    ierr = VecDuplicate(x, &rho); CHKERRQ(ierr);
 
-    return;
+    return 0;
 }
 
 /*****************************************************************/
@@ -1580,7 +1942,6 @@ void TopOpt::Initialize_Vectors()
 void TopOpt::Localize()
 {
     /// Convert elements to local node numbers
-
     PetscInt *start = gNode.data(), *finish = gNode.data()+gNode.size();
     for (PetscInt i = 0; i < element.rows(); i++)
     {

@@ -93,10 +93,11 @@ void TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
 
 void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
                        ArrayXPI &Nel, double &R, bool &Normalization,
-                       bool &Reorder_Mesh, int &mg_levels)
+                       bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
 {
   topOpt->smoother = "chebyshev";
   topOpt->verbose = 1;
+  topOpt->folder = "";
   // Variables needed for parsing input file
   ifstream file(filename.c_str());
   if (!file.is_open())
@@ -113,7 +114,6 @@ void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
   // Parse the file
   while (!file.eof())
   {
-    sleep(1);
     if (!active_section)
     {
       active_section = !line.compare("[Params]");
@@ -226,6 +226,22 @@ void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
         file >> line;
         mg_levels = strtol(line.c_str(), NULL, 0);
       }
+      else if (!line.compare(0,15,"MG_Min_Mat_Size"))
+      {
+        file >> line;
+        min_size = strtol(line.c_str(), NULL, 0);
+      }
+      else if (!line.compare(0,14,"MG_Coarse_Size"))
+      {
+        file >> line;
+        int c_size = strtol(line.c_str(), NULL, 0);
+        double temp = log2(Nel.size());
+        for (int i = 0; i < Nel.size(); i++)
+          temp += log2(Nel(i)+1);
+        temp -= log2(c_size);
+        temp /= Nel.size();
+        mg_levels = ceil(temp)+1;
+      }
       else if (!line.compare(0,8,"Smoother"))
       {
         file >> topOpt->smoother;
@@ -234,6 +250,11 @@ void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
       {
         file >> line;
         topOpt->verbose = strtol(line.c_str(), NULL, 0);
+      }
+      else if (!line.compare(0,6,"Folder") || !line.compare(0,7,"Restart"))
+      {
+        file.ignore();
+        getline(file, topOpt->folder);
       }
 
       file >> line;

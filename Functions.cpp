@@ -8,7 +8,7 @@ namespace Functions
 int FunctionCall (TopOpt *topOpt, double &f, Eigen::VectorXd &dfdx,
                    Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
-  PetscErrorCode ierr;
+  PetscErrorCode ierr = 0;
 
   /// Evaluates objective function and constraint functions
   int num_constraints = (int)(topOpt->Comp==2) + (int)(topOpt->Perim==2) + (int)(topOpt->Vol==2);

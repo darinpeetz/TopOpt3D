@@ -9,7 +9,7 @@ namespace Functions
 {
   int Compliance( TopOpt *topOpt, double &obj, double *grad )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     // Objective
     ierr = VecTDot(topOpt->U, topOpt->F, &obj); CHKERRQ(ierr);
 

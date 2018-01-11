@@ -9,7 +9,7 @@ namespace Functions
 {
   int Volume( TopOpt *topOpt, double &obj, double *grad )
   {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     /// Objective
     ierr = VecSum( topOpt->V, &obj ); CHKERRQ(ierr);
     obj /= topOpt->nElem;
