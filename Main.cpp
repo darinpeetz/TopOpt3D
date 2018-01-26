@@ -13,10 +13,10 @@
 
 using namespace std;
 
-extern PetscLogEvent JDMG_Initialize, JDMG_Prep, JDMG_Convergence, JDMG_Expand, JDMG_Update;
-extern PetscLogEvent JDMG_Comp_Init, JDMG_Hierarchy, JDMG_Setup_Coarse, JDMG_Comp_Coarse;
-extern PetscLogEvent JDMG_MGSetUp, JDMG_Precondition, JDMG_Jacobi, *JDMG_ApplyOP;
-extern PetscLogEvent *JDMG_ApplyOP1, *JDMG_ApplyOP2, *JDMG_ApplyOP3, *JDMG_ApplyOP4;
+extern PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
+extern PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Setup_Coarse, EIG_Comp_Coarse;
+extern PetscLogEvent EIG_MGSetUp, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
+extern PetscLogEvent *EIG_ApplyOP1, *EIG_ApplyOP2, *EIG_ApplyOP3, *EIG_ApplyOP4;
 extern PetscLogStage stage_JD, stage_JDMG;
 
 static char help[] = "The topology optimization routine we deserve, but not the one we need right now.\n\n";
@@ -31,18 +31,18 @@ int main(int argc, char **args)
     int myid, nproc;
     PetscErrorCode ierr = 0;
     SlepcInitialize(&argc,&args,(char*)0,help);
-    ierr = PetscLogEventRegister("JDMG_Initialize", 0, &JDMG_Initialize); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Prep", 0, &JDMG_Prep); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Comp_Init", 0, &JDMG_Comp_Init); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Hierachy", 0, &JDMG_Hierarchy); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Setup_Coarse", 0, &JDMG_Setup_Coarse); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Comp_Coarse", 0, &JDMG_Comp_Coarse); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Convergence", 0, &JDMG_Convergence); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Expand", 0, &JDMG_Expand); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Update", 0, &JDMG_Update); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_MGSetUp", 0, &JDMG_MGSetUp); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Precondition", 0, &JDMG_Precondition); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("JDMG_Jacobi", 0, &JDMG_Jacobi); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Initialize", 0, &EIG_Initialize); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Prep", 0, &EIG_Prep); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Comp_Init", 0, &EIG_Comp_Init); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Hierachy", 0, &EIG_Hierarchy); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Setup_Coarse", 0, &EIG_Setup_Coarse); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Comp_Coarse", 0, &EIG_Comp_Coarse); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Convergence", 0, &EIG_Convergence); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Expand", 0, &EIG_Expand); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Update", 0, &EIG_Update); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_MGSetUp", 0, &EIG_MGSetUp); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Precondition", 0, &EIG_Precondition); CHKERRQ(ierr);
+    ierr = PetscLogEventRegister("EIG_Jacobi", 0, &EIG_Jacobi); CHKERRQ(ierr);
     ierr = PetscLogStageRegister("JD", &stage_JD); CHKERRQ(ierr);
     ierr = PetscLogStageRegister("JDMG", &stage_JDMG); CHKERRQ(ierr);
     MPI_Comm Opt_Comm = MPI_COMM_WORLD;
@@ -90,26 +90,26 @@ int main(int argc, char **args)
       topOpt->penal = topOpt->pmin;
     }
 
-JDMG_ApplyOP  = new PetscLogEvent[mg_levels-1];
-JDMG_ApplyOP1 = new PetscLogEvent[mg_levels-1];
-JDMG_ApplyOP2 = new PetscLogEvent[mg_levels-1];
-JDMG_ApplyOP3 = new PetscLogEvent[mg_levels-1];
-JDMG_ApplyOP4 = new PetscLogEvent[mg_levels-1];
+EIG_ApplyOP  = new PetscLogEvent[mg_levels-1];
+EIG_ApplyOP1 = new PetscLogEvent[mg_levels-1];
+EIG_ApplyOP2 = new PetscLogEvent[mg_levels-1];
+EIG_ApplyOP3 = new PetscLogEvent[mg_levels-1];
+EIG_ApplyOP4 = new PetscLogEvent[mg_levels-1];
 for (int i = 0; i < mg_levels-1; i++)
 {
   char event_name[30];
   int size;
   MPI_Comm_size(topOpt->MG_comms[i], &size);
-  sprintf(event_name, "JDMG_ApplyOP_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP+i); CHKERRQ(ierr);
-  sprintf(event_name, "JDMG_ApplyOP1_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP1+i); CHKERRQ(ierr);
-  sprintf(event_name, "JDMG_ApplyOP2_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP2+i); CHKERRQ(ierr);
-  sprintf(event_name, "JDMG_ApplyOP3_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP3+i); CHKERRQ(ierr);
-  sprintf(event_name, "JDMG_ApplyOP4_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, JDMG_ApplyOP4+i); CHKERRQ(ierr);
+  sprintf(event_name, "EIG_ApplyOP_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP+i); CHKERRQ(ierr);
+  sprintf(event_name, "EIG_ApplyOP1_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP1+i); CHKERRQ(ierr);
+  sprintf(event_name, "EIG_ApplyOP2_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP2+i); CHKERRQ(ierr);
+  sprintf(event_name, "EIG_ApplyOP3_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP3+i); CHKERRQ(ierr);
+  sprintf(event_name, "EIG_ApplyOP4_%i_%i", i+1, size);
+  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP4+i); CHKERRQ(ierr);
 }
 
     // Write out the mesh to file
@@ -150,14 +150,13 @@ for (int i = 0; i < mg_levels-1; i++)
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       StepOut(topOpt, f, g, optmma->Get_it());
 
-ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
+/*ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
     delete topOpt;
     delete optmma;
-    delete[] JDMG_ApplyOP3;
 
     ierr = SlepcFinalize(); CHKERRQ(ierr);
 
-    return ierr;
+    return ierr; */
       do
       {
         ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);

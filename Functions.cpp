@@ -81,21 +81,16 @@ int FunctionCall (TopOpt *topOpt, double &f, Eigen::VectorXd &dfdx,
   temp *= 0; dtemp *= 0;
   if (topOpt->Stab == 1)
   {
-    PetscInt nevals = topOpt->Stab_nev;
+    PetscInt nevals = topOpt->Stab_optnev;
     ierr = Functions::Buckling( topOpt, temp.data(), dtemp.data(), nevals ); CHKERRQ(ierr);
-    for (short i = 0; i < min(nevals,(PetscInt)topOpt->Stab_optnev); i++)
+    for (short i = 0; i < nevals; i++)
     {
-      f += topOpt->Stab_val[i] * (temp(i) - topOpt->Stab_min) /
+      f += topOpt->Stab_val[0] * (temp(i) - topOpt->Stab_min) /
         (topOpt->Stab_max - topOpt->Stab_min);
-      dfdx += topOpt->Stab_val[i] * dtemp.col(i) /
+      dfdx += topOpt->Stab_val[0] * dtemp.col(i) /
         (topOpt->Stab_max - topOpt->Stab_min);
     }
-    for (short i = topOpt->Stab_optnev, j = 0; i < nevals; i++, j++)
-    {
-      g(active_constraint+j) = (temp(i) - 0.99*temp(i-1))/(topOpt->Stab_max-topOpt->Stab_min);
-      dgdx.col(active_constraint+j) = dtemp.col(i)/(topOpt->Stab_max-topOpt->Stab_min);
-    }
-    active_constraint += topOpt->Stab_nev - topOpt->Stab_optnev;
+    f /= nevals; dfdx /= nevals;
   }
   else if (topOpt->Stab == 2)
   {
@@ -121,19 +116,14 @@ int FunctionCall (TopOpt *topOpt, double &f, Eigen::VectorXd &dfdx,
   {
     PetscInt nevals = topOpt->Dyn_nev;
     ierr = Functions::Dynamic( topOpt, temp.data(), dtemp.data(), nevals ); CHKERRQ(ierr);
-    for (short i = 0; i < min(nevals,(PetscInt)topOpt->Dyn_optnev); i++)
+    for (short i = 0; i < nevals; i++)
     {
-      f += topOpt->Dyn_val[i] * (temp(i) - topOpt->Dyn_min) /
+      f += topOpt->Dyn_val[0] * (temp(i) - topOpt->Dyn_min) /
         (topOpt->Dyn_max - topOpt->Dyn_min);
-      dfdx += topOpt->Dyn_val[i] * dtemp.col(i) /
+      dfdx += topOpt->Dyn_val[0] * dtemp.col(i) /
         (topOpt->Dyn_max - topOpt->Dyn_min);
     }
-    for (short i = topOpt->Dyn_optnev, j = 0; i < nevals; i++, j++)
-    {
-      g(active_constraint+j) = (temp(i) - 0.99*temp(i-1))/(topOpt->Dyn_max-topOpt->Dyn_min);
-      dgdx.col(active_constraint+j) = dtemp.col(i)/(topOpt->Dyn_max-topOpt->Dyn_min);
-    }
-    active_constraint += topOpt->Dyn_nev - topOpt->Dyn_optnev;
+    f /= nevals; dfdx /= nevals;
   }
   else if (topOpt->Dyn == 2)
   {

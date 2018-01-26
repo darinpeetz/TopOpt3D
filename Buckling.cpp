@@ -5,7 +5,10 @@
 #include "TopOpt.h"
 #include "EigLab.h"
 #include "EigenPeetz.h"
+#include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
+
+PetscLogStage stage_JD, stage_JDMG;
 
 using namespace std;
 
@@ -38,13 +41,117 @@ namespace Functions
       ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
     }
 
+Mat Ks2;
+ierr = MatDuplicate(Ks, MAT_SHARE_NONZERO_PATTERN, &Ks2); CHKERRQ(ierr);
+ierr = MatCopy(Ks, Ks2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
+ierr = MatScale(Ks2, -1); CHKERRQ(ierr);
+
+FILE *timings;
+ierr = PetscFOpen(topOpt->comm, "Timings", "a", &timings); CHKERRQ(ierr);
+double t0 = MPI_Wtime();
+    LOPGMRES lopgmres(topOpt->comm);
+    lopgmres.Set_Verbose(topOpt->verbose);
+    lopgmres.Set_File(topOpt->output);
+    // Get restrictors from FEM problem
+    PC pcmg; PCType pctype;
+    ierr = KSPGetPC(topOpt->KUF, &pcmg); CHKERRQ(ierr);
+    ierr = PCGetType(pcmg, &pctype); CHKERRQ(ierr);
+    /*if (!strcmp(pctype,PCMG))
+    {*/
+      ierr = lopgmres.Set_Hierarchy(topOpt->PR); CHKERRQ(ierr);
+    /*}
+    else if (!strcmp(pctype,PCGAMG))
+    {
+      ierr = lopgmres.PCMG_Extract(pcmg); CHKERRQ(ierr);
+    }
+    else
+       SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);*/
+    // Set Operators
+    lopgmres.Set_Operators(Ks, topOpt->K);
+    // Set target eigenvalues
+    Nev_Type target_type = UNIQUE_LAST_NEV;
+    lopgmres.Set_Target(LR, nevals, target_type);
+    lopgmres.Set_MaxIt((nevals+1)*50*(PetscInt)log(topOpt->nElem));
+    lopgmres.Set_Cycle(FMGCycle);
+    lopgmres.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
+    // Compute the eigenvalues
+    ierr = lopgmres.Compute(); CHKERRQ(ierr);
+    PetscInt nev_conv = lopgmres.Get_nev_conv();
+    PetscInt its = lopgmres.Get_Iterations();
+    Eigen::VectorXd lam(nev_conv);
+    lopgmres.Get_Eigenvalues(lam.data());
+
+ierr = PetscFPrintf(topOpt->comm, timings, "LOPGMRES took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
+t0 = MPI_Wtime();
+
+{
+  EPS eps; ST st; KSP ksp; PC pc, JUNK;
+  ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
+  ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
+  ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
+  ierr = EPSSetTolerances(eps, pow(10,log10(2*topOpt->nNode)/2-8), PETSC_DEFAULT); CHKERRQ(ierr);
+  // Setting up krylov ST structure
+  ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
+  ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);
+  ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
+  ierr = PCSetType(pc, PCMG); CHKERRQ(ierr);
+  ierr = KSPSetOperators(ksp, topOpt->K, topOpt->K); CHKERRQ(ierr);
+  PetscInt nlevels = topOpt->PR.size()+1;
+  ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
+  ierr = PCMGSetType(pc, PC_MG_FULL); CHKERRQ(ierr);
+  ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
+  for (int i = 1; i < nlevels; i++) {
+    ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
+  // Use direct solve on coarse level
+  ierr = PCSetUp(pc); CHKERRQ(ierr);
+  KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
+  ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+  ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
+  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+  ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
+  ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+  ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
+  ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+  ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+  ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
+  ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
+  ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
+  ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
+  ierr = PCSetUp(pc); CHKERRQ(ierr);
+  // Use Jacobi smoothing
+  for (int i = 1; i < nlevels; i++)
+  {
+    ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+    ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
+    ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
+    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+    ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
+  }
+
+  ierr = EPSSetDimensions(eps, nevals+1, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
+  ierr = EPSSetType(eps, EPSLOBPCG); CHKERRQ(ierr);
+  ierr = EPSSetOperators(eps, Ks2, topOpt->K); CHKERRQ(ierr);
+  ierr = EPSSetOptionsPrefix(eps, "LOBPCG_"); CHKERRQ(ierr);
+  ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
+  ierr = EPSSolve(eps); CHKERRQ(ierr);
+  ierr = EPSGetConverged(eps, &nev_conv); CHKERRQ(ierr);
+  ierr = EPSGetIterationNumber(eps, &its); CHKERRQ(ierr);
+  ierr = PCCreate(topOpt->comm, &JUNK); CHKERRQ(ierr);
+  ierr = KSPSetPC(ksp, JUNK); CHKERRQ(ierr);
+  ierr = PCDestroy(&JUNK); CHKERRQ(ierr);
+  ierr = MatAssemblyBegin(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = EPSDestroy(&eps); CHKERRQ(ierr);
+}
+
+ierr = PetscFPrintf(topOpt->comm, timings, "LOBPCG took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
+t0 = MPI_Wtime();
+
     /// Create JDMG instance
     JDMG jdmg(topOpt->comm);
     jdmg.Set_Verbose(topOpt->verbose);
     jdmg.Set_File(topOpt->output);
     // Get restrictors from FEM problem
-    PC pcmg; PCType pctype;
-    ierr = KSPGetPC(topOpt->KUF, &pcmg); CHKERRQ(ierr);
     ierr = PCGetType(pcmg, &pctype); CHKERRQ(ierr);
     /*if (!strcmp(pctype,PCMG))
     {*/
@@ -59,28 +166,47 @@ namespace Functions
     // Set Operators
     jdmg.Set_Operators(Ks, topOpt->K);
     // Set target eigenvalues
-    Nev_Type target_type = UNIQUE_LAST_NEV;
-    jdmg.Set_Target(LR, nevals, UNIQUE_LAST_NEV);
+    jdmg.Set_Target(LR, nevals, target_type);
     jdmg.Set_MaxIt((nevals+1)*50*(PetscInt)log(topOpt->nElem));
     jdmg.Set_Cycle(FMGCycle);
-    jdmg.Set_Tol(1e-6);
+    jdmg.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
     // Compute the eigenvalues
-    ierr = PetscLogEventBegin(topOpt->JDCompEvent, 0, 0, 0, 0); CHKERRQ(ierr);
     ierr = jdmg.Compute(); CHKERRQ(ierr);
-    ierr = PetscLogEventEnd(topOpt->JDCompEvent, 0, 0, 0, 0); CHKERRQ(ierr);
 
     // Get the results
-    PetscInt nev_conv = 0;
-    jdmg.Get_nev_conv(nev_conv);
+    its = jdmg.Get_Iterations();
+    nev_conv = jdmg.Get_nev_conv();
+    jdmg.Get_Eigenvalues(lambda);
+
+ierr = PetscFPrintf(topOpt->comm, timings, "JDMG took %1.6g seconds and %i iterations to find %i eigenvalues\n\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
+
+Eigen::Map<Eigen::VectorXd> lambda_map(lambda, nev_conv);
+if ((lam.size() != lambda_map.size()) || (lam-lambda_map).norm()/lambda_map.norm() > 1e-3)
+{
+  ierr = PetscFPrintf(topOpt->comm, timings, "LOPGMRES and JDMG eigenvalues conflict, values are:\nLOPGMRES:\t\t JDMG:\n"); CHKERRQ(ierr);
+  for (int ii = 0; ii < max(lam.size(), lambda_map.size()); ii++)
+  {
+    if (ii < lam.size())
+      PetscFPrintf(topOpt->comm, timings, "%17.16g\t", lam(ii));
+    else
+      PetscFPrintf(topOpt->comm, timings, "0\t", 0);
+    if (ii < lambda_map.size())
+      PetscFPrintf(topOpt->comm, timings, "%17.16g\n", 0*lambda_map(ii));
+    else
+      PetscFPrintf(topOpt->comm, timings, "0\n");
+  }
+  PetscFPrintf(topOpt->comm, timings, "\n");
+}
+ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
+
     nev_conv = (target_type == TOTAL_NEV) ? nev_conv : min(nevals, nev_conv);
-    jdmg.Get_EigenValues(lambda);
 
     // Return if sensitivities aren't needed
     if (grad == NULL)
       return 0;
 
     Vec *phi, phi_copy;
-    jdmg.Get_EigenVectors(&phi);
+    jdmg.Get_Eigenvectors(&phi);
 
     ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
     for (int i = 0; i < nev_conv; i++)

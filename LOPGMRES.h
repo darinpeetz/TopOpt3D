@@ -1,7 +1,7 @@
-#ifndef Eigen_H_INCLUDED
-#define Eigen_H_INCLUDED
+#ifndef LOPGMRES_H_INCLUDED
+#define LOPGMRES_H_INCLUDED
 
-#include <slepceps.h>
+#include <petscksp.h>
 #include <vector>
 #include <Eigen/Eigen>
 #include <algorithm>
@@ -12,15 +12,17 @@ typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
 typedef Eigen::Matrix<double, -1, -1, Eigen::RowMajor> MatrixXdRM;
 #define MPI_PETSCINT MPIU_INT
 
+#ifndef Eigen_H_INCLUDED
 enum Tau { NUMERIC, LM, LR, LA, SM, SR, SA };
 enum Nev_Type { TOTAL_NEV, UNIQUE_NEV, UNIQUE_LAST_NEV};
 enum MG_Cycle_Type {VCycle, FMGCycle};
+#endif
 
 typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixPS;
 typedef Eigen::Array<PetscScalar, -1, 1>  ArrayPS;
 
 /// The master structure containing all information to be carried between iterations
-class JDMG
+class LOPGMRES
 {
   /// Class variables
 public:
@@ -32,15 +34,15 @@ public:
 
   /// Class methods
   // Constructors
-  JDMG() {JDMG(MPI_COMM_WORLD);}
-  JDMG(MPI_Comm comm);
+  LOPGMRES() {LOPGMRES(MPI_COMM_WORLD);}
+  LOPGMRES(MPI_Comm comm);
   // Destructor
-  ~JDMG();
+  ~LOPGMRES();
   // How much information to print
   PetscErrorCode Set_Verbose(PetscInt verbose);
   // Where to print the information
   PetscErrorCode Set_File(FILE *output); // For already opened files
-  PetscErrorCode Open_File(const char filename[]); // For files to be opened within JDMG
+  PetscErrorCode Open_File(const char filename[]); // For files to be opened within LOPGMRES
   PetscErrorCode Close_File() {if (file_opened) {return PetscFClose(comm, output);} return 0;}
   // Set operators of eigensystem
   PetscErrorCode Set_Operators(Mat A, Mat B);
@@ -65,7 +67,7 @@ public:
   void Set_jmax(PetscInt jmax) {this->jmax = jmax;}
   // Get results
   PetscInt Get_nev_conv() {return this->nev_conv;}
-  // Ownership is retained by JDMG
+  // Ownership is retained by LOPGMRES
   void Get_Eigenvectors(Vec** phi) {*phi = this->phi;}
   void Get_Eigenvalues(PetscScalar* lambda)
     {std::copy(this->lambda.data(), this->lambda.data()+this->nev_conv, lambda);}
@@ -81,7 +83,7 @@ private:
   // Prolongation Matrices
   std::vector<Mat> P;
   // System Matrices and their coarse-grid representations
-  std::vector<Mat> A, B;
+  std::vector<Mat> A, B, K;
   // Number of levels in hierarchy
   PetscInt levels;
   // Eigenvalues and EigenVectors
@@ -116,7 +118,6 @@ private:
   // Flag indicating if Compute_Init needs to be run
   bool prepped;
   // EPS object for coarse scale eigenvalue problem and KSP for solver
-  EPS eps_coarse;
   KSP ksp_coarse;
 
   /// Variables only needed in compute step
@@ -162,8 +163,8 @@ private:
   // Weighted Jacobi smoothing
   PetscErrorCode WJac(Vec* QMatP, ArrayPS &QMatQ, Vec D, Vec y, Vec x, PetscInt level);
   // Apply Operator at a given level
-  PetscErrorCode ApplyOP(Vec* QMatP, ArrayPS &QMatQ, Vec x, Vec y, PetscInt level);
+  PetscErrorCode ApplyOP(Vec x, Vec y, PetscInt level);
 
 };
 
-#endif // Eigen_H_INCLUDED
+#endif // LOPGMRES_H_INCLUDED

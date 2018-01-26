@@ -433,7 +433,7 @@ int TopOpt::MatIntFnc( const Eigen::VectorXd &y )
     ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
   }
 
-  double eps = 1e-4; // Minimum stiffness
+  double eps = 1e-10; // Minimum stiffness
   double *p_x, *p_rho, *p_V, *p_E, *p_Es, /**p_dVdy,*/ *p_dEdy, *p_dEsdy; // Pointers
 
   // Feed in the raw density values
