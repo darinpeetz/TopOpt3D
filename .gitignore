@@ -5,7 +5,6 @@
 
 # Batch scripts and makefiles (since they are system dependent)
 *.pbs
-makefile
 
 # Files being edited
 *~

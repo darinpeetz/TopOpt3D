@@ -14,6 +14,11 @@ typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixPS;
 typedef Eigen::Array<PetscScalar, -1, 1>  ArrayPS;
 #define MPI_PETSCINT MPIU_INT
 
+extern PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
+extern PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Setup_Coarse, EIG_Comp_Coarse;
+extern PetscLogEvent EIG_MGSetup, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
+extern PetscLogEvent *EIG_ApplyOP1, *EIG_ApplyOP2, *EIG_ApplyOP3, *EIG_ApplyOP4;
+
 enum Tau {NUMERIC, LM, LR, LA, SM, SR, SA };
 enum Nev_Type {TOTAL_NEV, UNIQUE_NEV, UNIQUE_LAST_NEV};
 
@@ -56,6 +61,10 @@ public:
   void Get_Eigenvectors(Vec** phi) {*phi = this->phi;}
   void Get_Eigenvalues(PetscScalar* lambda)
     {std::copy(this->lambda.data(), this->lambda.data()+this->nev_conv, lambda);}
+
+  // Loggers
+  static PetscErrorCode Initialize();
+  static PetscErrorCode Finalize();
 
 protected:
   // Amount of information to print (0, 1, or 2)

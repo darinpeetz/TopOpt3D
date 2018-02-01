@@ -37,9 +37,10 @@ vector<double> Get_Values(string line)
   return vals;
 }
 
-void TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
+PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
           Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE)
 {
+  PetscErrorCode ierr = 0;
   Eigen::ArrayXd distances = Eigen::ArrayXd::Zero(nLocNode);
   Eigen::Array<bool, -1, 1> valid = Eigen::Array<bool, -1, 1>::Ones(nLocNode);
 
@@ -88,23 +89,21 @@ void TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
       PetscPrintf(comm, " Support, Load, Mass, and Spring\n");
       break;
   }
-  return;
+  return ierr;
 }
 
-void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
+PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
                        ArrayXPI &Nel, double &R, bool &Normalization,
                        bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
 {
+  PetscErrorCode ierr = 0;
   topOpt->smoother = "chebyshev";
   topOpt->verbose = 1;
   topOpt->folder = "";
   // Variables needed for parsing input file
   ifstream file(filename.c_str());
   if (!file.is_open())
-  {
-    PetscPrintf(comm, "Could not find specified input file\n");
-    MPI_Abort(comm, 404);
-  }
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Could not find specified input file");
   string line;
   file >> line;
   bool active_section = false;
@@ -123,7 +122,7 @@ void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
     else
     {
       if (!line.compare(0,9,"[/Params]"))
-        return;
+        return ierr;
       else if (!line.compare(0,10,"Dimensions"))
       {
         getline(file, line);
@@ -261,22 +260,16 @@ void TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
     }
   }
 
-  return;
+  return ierr;
 }
 
-void TopOpt::Set_Funcs()
+PetscErrorCode TopOpt::Set_Funcs()
 {
-  // Assume no functions initially
-  Comp = 0; Perim = 0; Vol = 0; Stab = 0; Dyn = 0;
-  Stab_optnev = 0; Stab_nev = 0; Dyn_optnev = 0; Dyn_nev = 0;
-
+  PetscErrorCode ierr = 0;
   // Variables needed for parsing input file
   ifstream file(filename.c_str());
   if (!file.is_open())
-  {
-    PetscPrintf(comm, "Could not find specified input file\n");
-    MPI_Abort(comm, 404);
-  }
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Could not find specified input file");
   string line;
   file >> line;
   bool active_section = false;
@@ -292,126 +285,109 @@ void TopOpt::Set_Funcs()
     }
     else
     {
-      // Aliases for function details
-      double *min = NULL, *max = NULL;
-      vector<double> *value = NULL;
-      short *func = NULL, *nev = NULL, *optnev = NULL;
-
+      FUNCTION_TYPE func;
       if (!line.compare("[/Functions]"))
-        return;
+        return ierr;
       else if (!line.compare(0,10,"Compliance"))
-      {
-        func = &Comp;
-        value = &Comp_val;
-        min = &Comp_min;
-        max = &Comp_max;
-      }
+        func = COMPLIANCE;
       else if (!line.compare(0,9,"Perimeter"))
-      {
-        func = &Perim;
-        value = &Perim_val;
-        min = &Perim_min;
-        max = &Perim_max;
-      }
+        func = PERIMETER;
       else if (!line.compare(0,6,"Volume"))
-      {
-        func = &Vol;
-        value = &Vol_val;
-        min = &Vol_min;
-        max = &Vol_max;
-      }
+        func = VOLUME;
       else if (!line.compare(0,9,"Stability"))
-      {
-        func = &Stab;
-        value = &Stab_val;
-        min = &Stab_min;
-        max = &Stab_max;
-        optnev = &Stab_optnev;
-        nev = &Stab_nev;
-      }
+        func = STABILITY;
       else if (!line.compare(0,7,"Dynamic") || !line.compare(0,9,"Frequency"))
-      {
-        func = &Dyn;
-        value = &Dyn_val;
-        min = &Dyn_min;
-        max = &Dyn_max;
-        optnev = &Dyn_optnev;
-        nev = &Dyn_nev;
-      }
+        func = FREQUENCY;
       else
-      {
-        if (myid == 0)
-          cout << "Unknown function type specified in Input file\n";
-        MPI_Abort(comm, 404);
-      }
-
+        SETERRQ(comm, PETSC_ERR_SUP, "Uknown function type specified");
       file >> line;
+
+      // Function details
+      double min = 0, max = 0;
+      vector<PetscScalar> values;
+      PetscBool objective = PETSC_TRUE;
+
       while (true)
       {
         if (!line.compare(0,9,"Objective"))
         {
-          *func = 1;
+          objective = PETSC_TRUE;
           file >> line;
           continue;
         }
         else if (!line.compare(0,10,"Constraint"))
         {
-          *func = 2;
+          objective = PETSC_FALSE;
           file >> line;
           continue;
         }
         else if (!line.compare(0,6,"Values"))
         {
           file >> line;
+          if (!isdigit(line.c_str()[0]))
+            SETERRQ(comm, PETSC_ERR_ARG_NULL, "Need to specify function weight/constraint");
           while (isdigit(line.c_str()[0]) || !line.compare(0,1,"-"))
           {
-            value->push_back(strtod(line.c_str(), NULL));
+            values.push_back(strtod(line.c_str(), NULL));
             file >> line;
           }
-          if (optnev != NULL)
-            *optnev = value->size();
           continue;
         }
         else if (!line.compare(0,5,"Range"))
         {
           file >> line;
-          *min = strtod(line.c_str(), NULL);
+          min = strtod(line.c_str(), NULL);
           file >> line;
-          *max = strtod(line.c_str(), NULL);
-          file >> line;
-          continue;
-        }
-        else if (!line.compare(0,3,"Nev"))
-        {
-          file >> line;
-          *nev = strtol(line.c_str(), NULL, 0);
+          max = strtod(line.c_str(), NULL);
           file >> line;
           continue;
         }
         break;
       }
+
+      switch(func){
+        case COMPLIANCE :
+          function_list.push_back(new Compliance(values, min, max, objective));
+          needK = PETSC_TRUE; needU = PETSC_TRUE;
+          break;
+        case PERIMETER :
+          function_list.push_back(new Perimeter(values, min, max, objective));
+          break;
+        case VOLUME :
+          function_list.push_back(new Volume(values, min, max, objective));
+          break;
+        case STABILITY :
+          function_list.push_back(new Stability(values, min, max, objective));
+          needK = PETSC_TRUE; needU = PETSC_TRUE;
+          bucklingShape.resize(1, values.size());
+          break;
+        case FREQUENCY :
+          function_list.push_back(new Frequency(values, min, max, objective));
+          needK = PETSC_TRUE;
+          dynamicShape.resize(1, values.size());
+          break;
+      }
     }
   }
-  return;
+  return ierr;
 }
 
-void TopOpt::Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
+PetscErrorCode TopOpt::Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
             Eigen::Array<bool, -1, 1> &elemValidity)
 {
+  PetscErrorCode ierr = 0;
   elemValidity.setOnes(Points.rows());
 
-  return;
+  return ierr;
 }
 
-void TopOpt::Def_BC()
+PetscErrorCode TopOpt::Def_BC()
 {
+  PetscErrorCode ierr = 0;
   // Variables needed for parsing input file
   ifstream file(filename.c_str());
   if (!file.is_open())
-  {
-    PetscPrintf(comm, "Could not find specified input file\n");
-    MPI_Abort(comm, 404);
-  }
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Could not find specified input file");
   string line;
   file >> line;
   bool active_section = false;
@@ -432,7 +408,7 @@ void TopOpt::Def_BC()
       Eigen::ArrayXXd limits;
       TYPE = OTHER;
       if (!line.compare("[/BC]"))
-        return;
+        return ierr;
       else if (!line.compare(0,7,"Support"))
         TYPE = SUPPORT;
       else if (!line.compare(0,4,"Load"))
@@ -486,8 +462,8 @@ void TopOpt::Def_BC()
         break;
       }
 
-      Set_BC(center, radius, limits, values, TYPE);
+      ierr = Set_BC(center, radius, limits, values, TYPE); CHKERRQ(ierr);
     }
   }
-  return;
+  return 0;
 }

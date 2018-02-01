@@ -26,6 +26,7 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 JDMG::JDMG(MPI_Comm comm)
 {
   this->comm = comm; Set_ID();
+  epstr = 1e-3;
   PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &verbose, NULL);
   PetscFOpen(this->comm, "stdout", "w", &output);
   file_opened = 1;
@@ -437,12 +438,6 @@ PetscErrorCode JDMG::Update_Preconditioner(Vec residual,
   ierr = VecNorm(AQ[0][nev_conv], NORM_2, &Au_norm); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(K.back(), MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
-  vicinity = rnorm/lambda(nev_conv) < epstr; sigma_old = sigma;
-  if (vicinity || tau != NUMERIC)
-    sigma = lambda(nev_conv);
-  else
-    sigma = tau_num;
-
   return 0;
 }
 
@@ -510,6 +505,18 @@ PetscErrorCode JDMG::MGSetup(Vec f, PetscReal fnorm)
   ierr = PetscLogEventBegin(EIG_MGSetup, 0, 0, 0, 0); CHKERRQ(ierr);
   if (this->verbose >= 3)
     ierr = PetscFPrintf(comm, output, "Setting up multigrid\n"); CHKERRQ(ierr);
+
+  // Set Shift
+  vicinity = fnorm/lambda(nev_conv) < epstr; sigma_old = sigma;
+  if (vicinity)
+    sigma = lambda(nev_conv);
+  else if (tau == NUMERIC)
+    sigma = tau_num;
+  else if (nev_conv == 0)
+    sigma = lambda(nev_conv);
+  else
+    sigma = lambda(nev_conv-1);
+
   // Coefficients for summing terms of diagonal
   ArrayPS sumcoeffs(6);
   //sumcoeffs << 1, -2, 1, -sigma, 2*sigma, -sigma;

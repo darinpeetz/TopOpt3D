@@ -7,9 +7,6 @@
 #include <algorithm>
 #include "PRINVIT.h"
 
-PETSC_EXTERN PetscLogEvent EIG_Setup_Coarse, EIG_Comp_Coarse, EIG_MGSetup;
-PETSC_EXTERN PetscLogEvent *EIG_ApplyOP1, *EIG_ApplyOP2, *EIG_ApplyOP3, *EIG_ApplyOP4;
-
 /// The master structure containing all information to be carried between iterations
 class JDMG : public PRINVIT
 {

@@ -5,6 +5,7 @@
 #include <vector>
 #include <Eigen/Eigen>
 #include "MMA.h"
+#include "Functions.h"
 extern "C"
 {
 #include "parmetis.h"
@@ -120,30 +121,21 @@ public:
   bool direct;                                 //Flag to use direct instead of iterative solver
 
   /// Function information
-  short Comp, Perim, Vol, Stab, Dyn;           //0-not used, 1 objective, 2 constraint
-  std::vector<double> Comp_val, Perim_val,
-          Vol_val, Stab_val, Dyn_val;          //Objective weight or constraint value
-  double Comp_min, Perim_min, Vol_min, Stab_min, Dyn_min; //Minimum values
-  double Comp_max, Perim_max, Vol_max, Stab_max, Dyn_max; //Maximum values
-  short Stab_optnev, Dyn_optnev;               //Number of eigenvalues to optimize
-  short Stab_nev, Dyn_nev;                     //Number of eigenvalues to use
+  std::vector<Function_Base*> function_list;
+  PetscBool needK, needU;
 
   /// Optimization variables
   double penal, pmin, pmax, pstep;             //penalization factor information
   Mat P;                                       //Filter Matrix
-  Eigen::MatrixXd dKsdu;                       //Local stress sensitivity matrix
   Vec V, dVdy, E, dEdy, Es, dEsdy;             //Material Interpolation Values
   Vec x, rho;                                  //Raw densities and filtered densities, rho = P*x
   PetscScalar PerimNormFactor;                 //For normalizing perimeter;
-  Eigen::MatrixXd v;                           //Adjoint problem solutions
   Eigen::MatrixXd bucklingShape, dynamicShape; //Eigenvectors
   Vec *bucklingDeflate, *dynamicDeflate;       //Deflation spaces for eigenvalue problems
   PetscInt bucklingIt, dynamicIt;              //Number of iterations for eigenvalue problems
 
   /// Profiling variables
-  int funcEvent, FEEvent, JDCompEvent, UpdateEvent;
-  int *JDMGEvents;
-
+  int funcEvent, FEEvent, UpdateEvent;
 
   /// Class methods
   // Constructors
@@ -156,14 +148,14 @@ public:
   ~TopOpt() {Clear();}
 
   // Parsing the input file
-  void Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
+  PetscErrorCode Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
                  ArrayXPI &Nel, double &Rfactor, bool &Normalization,
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
-  void Set_Funcs();
-  void Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
+  PetscErrorCode Set_Funcs();
+  PetscErrorCode Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
               Eigen::Array<bool, -1, 1> &elemValidity);
-  void Def_BC();
-  void Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
+  PetscErrorCode Def_BC();
+  PetscErrorCode Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
               Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE);
 
   // Basic methods
@@ -173,26 +165,19 @@ public:
     { this->numDims = numDims; int pow2 = pow(2,numDims);
       B = new Eigen::MatrixXd[pow2]; G = new Eigen::MatrixXd[pow2];
       GT = new Eigen::MatrixXd[pow2]; W = new double[pow2]; }
-  void Clear()
-    { delete[] B; delete[] G; delete[] GT; delete[] W; delete[] JDMGEvents;
-      VecDestroy(&F); VecDestroy(&U); /*MatDestroy(&spK);*/ VecDestroy(&spKVec);
-      MatDestroy(&K); VecDestroy(&MLump); KSPDestroy(&KUF);
-      /*KSPDestroy(&dynamicKSP); KSPDestroy(&bucklingKSP);*/ MatDestroy(&P);
-      VecDestroy(&V); VecDestroy(&dVdy); VecDestroy(&E); VecDestroy(&dEdy);
-      VecDestroy(&Es); VecDestroy(&dEsdy); VecDestroy(&x); VecDestroy(&rho);
-    }
+  void Clear();
 
   // Mesh Creation
   void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
                    ArrayXPI Nel, FilterArrays &filterArrays );
-  int LoadMesh(Eigen::VectorXd &xIni);
-  int CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel, double R,
+  PetscErrorCode LoadMesh(Eigen::VectorXd &xIni);
+  PetscErrorCode CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel, double R,
                    bool Reorder_Mesh, PetscInt mg_levels, PetscInt min_size );
-  int Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
+  PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
           ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels );
-  int Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
+  PetscErrorCode Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
               ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
-  int Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+  PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                                ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
   void Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
   void ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
@@ -207,14 +192,14 @@ public:
   void NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels);
   void Expand_Elem();
   void Expand_Node();
-  int Initialize_Vectors();
+  PetscErrorCode Initialize_Vectors();
   void Localize();
 
   // Finite Elements
-  int Initialize ( );
-  int FESolve ( );
-  int FEAssemble( );
-  int MatIntFnc ( const Eigen::VectorXd &y );
+  PetscErrorCode Initialize ( );
+  PetscErrorCode FESolve ( );
+  PetscErrorCode FEAssemble( );
+  PetscErrorCode MatIntFnc ( const Eigen::VectorXd &y );
 private:
   Eigen::MatrixXd LocalK ( PetscInt el );
   Eigen::ArrayXXd GaussPoints( );

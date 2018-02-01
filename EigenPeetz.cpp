@@ -18,6 +18,64 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 // in BLAS/LAPACK are necessary for performance (for subspace problem)
 
 /******************************************************************************/
+/**                            Initialize loggers                            **/
+/******************************************************************************/
+PetscErrorCode EigenPeetz::Initialize()
+{
+  PetscErrorCode ierr = 0;
+  ierr = PetscLogEventRegister("EIG_Initialize", 0, &EIG_Initialize); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Prep", 0, &EIG_Prep); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Comp_Init", 0, &EIG_Comp_Init); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Hierachy", 0, &EIG_Hierarchy); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Setup_Coarse", 0, &EIG_Setup_Coarse); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Comp_Coarse", 0, &EIG_Comp_Coarse); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Convergence", 0, &EIG_Convergence); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Expand", 0, &EIG_Expand); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Update", 0, &EIG_Update); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_MGSetup", 0, &EIG_MGSetup); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Precondition", 0, &EIG_Precondition); CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("EIG_Jacobi", 0, &EIG_Jacobi); CHKERRQ(ierr);
+
+  PetscInt mg_levels = 30;
+  EIG_ApplyOP  = new PetscLogEvent[mg_levels-1];
+  EIG_ApplyOP1 = new PetscLogEvent[mg_levels-1];
+  EIG_ApplyOP2 = new PetscLogEvent[mg_levels-1];
+  EIG_ApplyOP3 = new PetscLogEvent[mg_levels-1];
+  EIG_ApplyOP4 = new PetscLogEvent[mg_levels-1];
+  for (int i = 0; i < mg_levels-1; i++)
+  {
+    char event_name[30];
+    sprintf(event_name, "EIG_ApplyOP_%i", i+1);
+    ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP+i); CHKERRQ(ierr);
+    sprintf(event_name, "EIG_ApplyOP1_%i", i+1);
+    ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP1+i); CHKERRQ(ierr);
+    sprintf(event_name, "EIG_ApplyOP2_%i", i+1);
+    ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP2+i); CHKERRQ(ierr);
+    sprintf(event_name, "EIG_ApplyOP3_%i", i+1);
+    ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP3+i); CHKERRQ(ierr);
+    sprintf(event_name, "EIG_ApplyOP4_%i", i+1);
+    ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP4+i); CHKERRQ(ierr);
+  }
+  return ierr;
+}
+
+/******************************************************************************/
+/**                            Terminate loggers                             **/
+/******************************************************************************/
+PetscErrorCode EigenPeetz::Finalize()
+{
+  PetscErrorCode ierr = 0;
+
+  delete[] EIG_ApplyOP;
+  delete[] EIG_ApplyOP1;
+  delete[] EIG_ApplyOP2;
+  delete[] EIG_ApplyOP3;
+  delete[] EIG_ApplyOP4;
+
+  return ierr;
+}
+
+/******************************************************************************/
 /**                             Main constructor                             **/
 /******************************************************************************/
 EigenPeetz::EigenPeetz()

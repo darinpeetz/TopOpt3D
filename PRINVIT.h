@@ -7,9 +7,6 @@
 #include <algorithm>
 #include "EigenPeetz.h"
 
-PETSC_EXTERN PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
-PETSC_EXTERN PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
-
 enum MG_Cycle_Type {VCycle, FMGCycle};
 
 /// The master structure containing all information to be carried between iterations

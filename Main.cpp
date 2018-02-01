@@ -8,16 +8,11 @@
 #include "EigLab.h"
 #include "MMA.h"
 #include "Inputs.h"
+#include "EigenPeetz.h"
 #include <slepceps.h>
 #include "Functions.h"
 
 using namespace std;
-
-extern PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
-extern PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Setup_Coarse, EIG_Comp_Coarse;
-extern PetscLogEvent EIG_MGSetUp, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
-extern PetscLogEvent *EIG_ApplyOP1, *EIG_ApplyOP2, *EIG_ApplyOP3, *EIG_ApplyOP4;
-extern PetscLogStage stage_JD, stage_JDMG;
 
 static char help[] = "The topology optimization routine we deserve, but not the one we need right now.\n\n";
 
@@ -31,20 +26,7 @@ int main(int argc, char **args)
     int myid, nproc;
     PetscErrorCode ierr = 0;
     SlepcInitialize(&argc,&args,(char*)0,help);
-    ierr = PetscLogEventRegister("EIG_Initialize", 0, &EIG_Initialize); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Prep", 0, &EIG_Prep); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Comp_Init", 0, &EIG_Comp_Init); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Hierachy", 0, &EIG_Hierarchy); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Setup_Coarse", 0, &EIG_Setup_Coarse); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Comp_Coarse", 0, &EIG_Comp_Coarse); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Convergence", 0, &EIG_Convergence); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Expand", 0, &EIG_Expand); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Update", 0, &EIG_Update); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_MGSetUp", 0, &EIG_MGSetUp); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Precondition", 0, &EIG_Precondition); CHKERRQ(ierr);
-    ierr = PetscLogEventRegister("EIG_Jacobi", 0, &EIG_Jacobi); CHKERRQ(ierr);
-    ierr = PetscLogStageRegister("JD", &stage_JD); CHKERRQ(ierr);
-    ierr = PetscLogStageRegister("JDMG", &stage_JDMG); CHKERRQ(ierr);
+    ierr = EigenPeetz::Initialize(); CHKERRQ(ierr);
     MPI_Comm Opt_Comm = MPI_COMM_WORLD;
     MPI_Comm_rank(Opt_Comm, &myid);
     MPI_Comm_size(Opt_Comm, &nproc);
@@ -90,28 +72,6 @@ int main(int argc, char **args)
       topOpt->penal = topOpt->pmin;
     }
 
-EIG_ApplyOP  = new PetscLogEvent[mg_levels-1];
-EIG_ApplyOP1 = new PetscLogEvent[mg_levels-1];
-EIG_ApplyOP2 = new PetscLogEvent[mg_levels-1];
-EIG_ApplyOP3 = new PetscLogEvent[mg_levels-1];
-EIG_ApplyOP4 = new PetscLogEvent[mg_levels-1];
-for (int i = 0; i < mg_levels-1; i++)
-{
-  char event_name[30];
-  int size;
-  MPI_Comm_size(topOpt->MG_comms[i], &size);
-  sprintf(event_name, "EIG_ApplyOP_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP+i); CHKERRQ(ierr);
-  sprintf(event_name, "EIG_ApplyOP1_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP1+i); CHKERRQ(ierr);
-  sprintf(event_name, "EIG_ApplyOP2_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP2+i); CHKERRQ(ierr);
-  sprintf(event_name, "EIG_ApplyOP3_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP3+i); CHKERRQ(ierr);
-  sprintf(event_name, "EIG_ApplyOP4_%i_%i", i+1, size);
-  ierr = PetscLogEventRegister(event_name, 0, EIG_ApplyOP4+i); CHKERRQ(ierr);
-}
-
     // Write out the mesh to file
     MeshOut( topOpt );
 
@@ -124,9 +84,19 @@ for (int i = 0; i < mg_levels-1; i++)
     /// Optimize
     cout.precision(12);
     topOpt->Initialize();
+    PetscInt ncon = 0;
+    for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++)
+    {
+      if (topOpt->function_list[ii]->objective == PETSC_FALSE)
+        ncon++;
+    }
     double f;
-    Eigen::VectorXd dfdx, g;
-    Eigen::MatrixXd dgdx;
+    VectorXPS dfdx(topOpt->nLocElem), g(ncon);
+    MatrixXPS dgdx(topOpt->nLocElem, ncon);
+    topOpt->bucklingShape.resize(topOpt->node.size(), topOpt->bucklingShape.cols());
+    topOpt->dynamicShape.resize(topOpt->node.size(), topOpt->dynamicShape.cols());
+    for (unsigned int i = 0; i < topOpt->function_list.size(); i++){
+      ierr = topOpt->function_list[i]->Initialize_Arrays(topOpt->nLocElem); CHKERRQ(ierr); }
 
     for ( ; topOpt->penal <= topOpt->pmax; topOpt->penal += topOpt->pstep )
     {
@@ -136,17 +106,17 @@ for (int i = 0; i < mg_levels-1; i++)
       optmma->Set_It(0);
       topOpt->MatIntFnc( optmma->Get_x() );
       ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      if (topOpt->Comp || topOpt->Stab || topOpt->Dyn)
+      if (topOpt->needK)
       {
         ierr = topOpt->FEAssemble(); CHKERRQ(ierr);
       }
-      if (topOpt->Comp || topOpt->Stab)
+      if (topOpt->needU)
       {
         ierr = topOpt->FESolve(); CHKERRQ(ierr);
       }
       ierr = PetscLogEventEnd(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      ierr = Functions::FunctionCall( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
+      ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       StepOut(topOpt, f, g, optmma->Get_it());
 
@@ -164,17 +134,17 @@ for (int i = 0; i < mg_levels-1; i++)
         ierr = PetscLogEventEnd(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         topOpt->MatIntFnc( optmma->Get_x() );
         ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        if (topOpt->Comp || topOpt->Stab || topOpt->Dyn)
+        if (topOpt->needK)
         {
           ierr = topOpt->FEAssemble(); CHKERRQ(ierr);
         }
-        if (topOpt->Comp || topOpt->Stab)
+        if (topOpt->needU)
         {
           ierr = topOpt->FESolve(); CHKERRQ(ierr);
         }
         ierr = PetscLogEventEnd(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        ierr = Functions::FunctionCall( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
+        ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
 
         StepOut(topOpt, f, g, optmma->Get_it());
@@ -188,25 +158,8 @@ for (int i = 0; i < mg_levels-1; i++)
     /// Print out all function values if desired
     if (Normalization)
     {
-      double value; double *grad = NULL;
-      PetscFPrintf(topOpt->comm, topOpt->output, "***Final Values***\n");
-
-      ierr = Functions::Compliance( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscFPrintf(topOpt->comm, topOpt->output, "\tCompliance: %1.12g\n", value);
-
-      ierr = Functions::Perimeter( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscFPrintf(topOpt->comm, topOpt->output, "\tPerimeter: %1.12g\n", value);
-
-      ierr = Functions::Volume( topOpt, value, grad ); CHKERRQ(ierr);
-      PetscFPrintf(topOpt->comm, topOpt->output, "\tVolume: %1.12g\n", value);
-
-      PetscInt nevals = 1;
-      ierr = Functions::Buckling( topOpt, &value, grad, nevals ); CHKERRQ(ierr);
-      PetscFPrintf(topOpt->comm, topOpt->output, "\tBuckling: %1.12g\n", value);
-
-      nevals = 1;
-      ierr = Functions::Dynamic( topOpt, &value, grad, nevals ); CHKERRQ(ierr);
-      PetscFPrintf(topOpt->comm, topOpt->output, "\tFrequency: %1.12g\n", value);
+      ierr = PetscFPrintf(topOpt->comm, topOpt->output, "***Final Values***\n"); CHKERRQ(ierr);
+      ierr = Function_Base::Normalization(topOpt); CHKERRQ(ierr);
     }
 
     /// Wrap up and finish
@@ -214,6 +167,7 @@ for (int i = 0; i < mg_levels-1; i++)
     delete topOpt;
     delete optmma;
 
+    ierr = EigenPeetz::Finalize(); CHKERRQ(ierr);
     ierr = SlepcFinalize(); CHKERRQ(ierr);
 
     return ierr;

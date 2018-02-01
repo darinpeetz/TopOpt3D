@@ -1,49 +1,51 @@
-#include <iostream>
-#include <fstream>
 #include <numeric>
 #include <math.h>
 #include "Functions.h"
 #include "TopOpt.h"
 #include "EigLab.h"
-#include "EigenPeetz.h"
+#include "JDMG.h"
 #include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
-#include <sstream>
 
 using namespace std;
-typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixPS;
-typedef Eigen::Matrix<PetscScalar, -1, 1>  VectorPS;
 
-extern PetscLogStage stage_JD, stage_JDMG;
-
-namespace Functions
+PetscErrorCode Frequency::Function( TopOpt *topOpt )
 {
-  int DiagMassFnc( TopOpt *topOpt, Mat &M, Eigen::VectorXd &dMdy );
+  PetscErrorCode ierr = 0;
+  short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
 
-  int Dynamic( TopOpt *topOpt, double *lambda, double *grad, PetscInt &nevals )
+  if (topOpt->verbose >= 3)
   {
-    PetscErrorCode ierr = 0;
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Performing dynamic analysis\n"); CHKERRQ(ierr);
+  }
 
-    if (topOpt->verbose >= 3)
-    {
-      ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Performing dynamic analysis\n"); CHKERRQ(ierr);
-    }
+  /// Assemble Mass matrix and get sensitivity information
+  if (dMdy.size() == 0)
+  {
+    dMdy.resize( topOpt->nLocElem*(long)pow(DE,2) );
+    // Initialize M
+    ierr = MatCreate(topOpt->comm, &M); CHKERRQ(ierr);
+    ierr = MatSetSizes(M, topOpt->numDims*topOpt->nLocNode, topOpt->numDims*topOpt->nLocNode,
+          topOpt->numDims*topOpt->nNode, topOpt->numDims*topOpt->nNode); CHKERRQ(ierr);
+    ierr = MatSetOptionsPrefix(M,"M_"); CHKERRQ(ierr);
+    ierr = MatSetFromOptions(M); CHKERRQ(ierr);
+    ArrayXPI onDiag = ArrayXPI::Ones(topOpt->nLocNode);
+    ArrayXPI offDiag = ArrayXPI::Zero(topOpt->nLocNode);
+    ierr = MatXAIJSetPreallocation(M, topOpt->numDims, onDiag.data(), offDiag.data(), 0, 0); CHKERRQ(ierr);
+  }  
 
-    /// Assemble Mass matrix and get sensitivity information
-    Eigen::VectorXd dMdy;
-    Mat M;
-    ierr = DiagMassFnc( topOpt, M, dMdy ); CHKERRQ(ierr);
-    /// Remove fixed and spring dof from M (and K if necessary)
-    ierr = MatZeroRowsColumns(M, topOpt->fixedDof.size(),
-                       topOpt->fixedDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
-    if (topOpt->nSpringDof > 0)
-    {
-      ierr = MatZeroRowsColumns(M, topOpt->springDof.size(),
-                         topOpt->springDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
-      ierr = MatZeroRowsColumns(topOpt->K, topOpt->springDof.size(),
-                         topOpt->springDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
-      ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
-    }
+  ierr = DiagMassFnc( topOpt ); CHKERRQ(ierr);
+  /// Remove fixed and spring dof from M (and K if necessary)
+  ierr = MatZeroRowsColumns(M, topOpt->fixedDof.size(),
+             topOpt->fixedDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
+  if (topOpt->nSpringDof > 0)
+  {
+    ierr = MatZeroRowsColumns(M, topOpt->springDof.size(),
+             topOpt->springDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
+    ierr = MatZeroRowsColumns(topOpt->K, topOpt->springDof.size(),
+             topOpt->springDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+    ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
+  }
 
 PetscInt total_conv = 0, iter = 10, nev = 5, its = 0;
 FILE *timings;
@@ -106,7 +108,7 @@ for (int i = 0; i < run*iter; i++)
   ierr = PCMGSetType(pc, PC_MG_FULL); CHKERRQ(ierr);
   ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
   for (int i = 1; i < nlevels; i++) {
-    ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
+  ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
   // Use direct solve on coarse level
   ierr = PCSetUp(pc); CHKERRQ(ierr);
   KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
@@ -126,11 +128,11 @@ for (int i = 0; i < run*iter; i++)
   // Use Jacobi smoothing
   for (int i = 1; i < nlevels; i++)
   {
-    ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-    ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-    ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-    ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
+  ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+  ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
+  ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
+  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+  ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
   }
 
   ierr = EPSSetDimensions(eps, nev, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
@@ -181,7 +183,7 @@ for (int i = 0; i < run*iter; i++)
   ierr = PCMGSetType(pc, PC_MG_MULTIPLICATIVE); CHKERRQ(ierr);
   ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
   for (int i = 1; i < nlevels; i++) {
-    ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
+  ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
   // Use direct solve on coarse level
   ierr = PCSetUp(pc); CHKERRQ(ierr);
   KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
@@ -201,11 +203,11 @@ for (int i = 0; i < run*iter; i++)
   // Use Jacobi smoothing
   for (int i = 1; i < nlevels; i++)
   {
-    ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-    ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-    ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-    ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
+  ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+  ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
+  ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
+  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+  ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
   }
 
   // Solve the eigenvalue problem
@@ -222,10 +224,6 @@ for (int i = 0; i < run*iter; i++)
   ierr = EPSDestroy(&eps); CHKERRQ(ierr);
 }
 ierr = PetscFPrintf(topOpt->comm, timings, "Using built-in JD, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
-
-//ierr = PetscLogStagePop(); CHKERRQ(ierr);
-//MPI_Barrier(topOpt->comm);
-ierr = PetscLogStagePush(stage_JDMG); CHKERRQ(ierr);
 
 total_conv = 0; its = 0;
 PetscOptionsHasName(NULL, NULL, "-run_JDMG", &run);
@@ -250,7 +248,6 @@ for (int i = 0; i < run*iter; i++)
   its += jdmg.Get_Iterations();
 }
 ierr = PetscFPrintf(topOpt->comm, timings, "Using JDMG, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
-ierr = PetscLogStagePop(); CHKERRQ(ierr);
 
 total_conv = 0; its = 0;
 PetscOptionsHasName(NULL, NULL, "-run_LOPGMRES", &run);
@@ -277,78 +274,167 @@ for (int i = 0; i < run*iter; i++)
 ierr = PetscFPrintf(topOpt->comm, timings, "Using LOPGMRES, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
 ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
 
+  JDMG jdmg; Nev_Type target_type;
+  // Get the results
+  PetscInt nev_conv = jdmg.Get_nev_conv();
+  nev_conv -= (target_type == TOTAL_NEV) ? 0 : 1;
+  VectorXPS lambda(nev_conv);
+  jdmg.Get_Eigenvalues(lambda.data());
+
+  for (short j = 0; j < nvals-1; j++)
+    values(j) = lambda[j];
+  for (short j = nvals-1; j < nev_conv; j++)
+    values(nvals-1) = lambda[j];
+  values(nvals-1) /= nev_conv-nvals+1;
+
+  // Return if sensitivities aren't needed
+  if (calc_gradient == PETSC_FALSE)
     return 0;
-  }
 
-  /********************************************************************/
-  /*                  Creates the diagonal mass matrix               **/
-  /********************************************************************/
-  int DiagMassFnc( TopOpt *topOpt, Mat &M, Eigen::VectorXd &dMdy )
+  Vec *phi, phi_copy;
+  jdmg.Get_Eigenvectors(&phi);
+  ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
+  for (int i = 0; i < nev_conv; i++)
   {
-    PetscErrorCode ierr = 0;
+    ierr = VecPlaceArray(phi_copy, topOpt->dynamicShape.data() +
+            i*topOpt->dynamicShape.rows()); CHKERRQ(ierr);
+    ierr = VecCopy(phi[i], phi_copy);
+    ierr = VecGhostUpdateBegin(phi_copy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+    ierr = VecGhostUpdateEnd(phi_copy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+    ierr = VecResetArray(phi_copy);
+  }
+  ierr = VecDestroy(&phi_copy); CHKERRQ(ierr);
 
-    // Initialize M
-    ierr = MatCreate(topOpt->comm, &M); CHKERRQ(ierr);
-    ierr = MatSetSizes(M, topOpt->numDims*topOpt->nLocNode, topOpt->numDims*topOpt->nLocNode,
-                topOpt->numDims*topOpt->nNode, topOpt->numDims*topOpt->nNode); CHKERRQ(ierr);
-    ierr = MatSetOptionsPrefix(M,"M_"); CHKERRQ(ierr);
-    ierr = MatSetFromOptions(M); CHKERRQ(ierr);
-    ArrayXPI onDiag = ArrayXPI::Ones(topOpt->nLocNode);
-    ArrayXPI offDiag = ArrayXPI::Zero(topOpt->nLocNode);
-    ierr = MatXAIJSetPreallocation(M, topOpt->numDims, onDiag.data(), offDiag.data(), 0, 0); CHKERRQ(ierr);
-
-    // Mesh characteristics
-    const short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
-    // Track construction of Ks, dKs
-    long dMmarker = 0;
-    dMdy.resize( topOpt->nLocElem*(long)pow(DE,2) );
-
-    // Get pointers to Petsc vectors
-    const PetscScalar *p_V, *p_dVdy;
-    ierr = VecGetArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
-    ierr = VecGetArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
-
-    MatrixPS mMat = 1.0/pow(2,topOpt->numDims)/topOpt->numDims*
-            topOpt->elemSize(0)*topOpt->density*Eigen::MatrixXd::Identity(DE, DE);
-    Eigen::Map< VectorPS > mVec(mMat.data(), mMat.size());
-    MatrixPS nodeMat(topOpt->numDims, topOpt->numDims);
-    /// Loop over elements
-    for (long el = 0; el < topOpt->element.rows(); el++)
+  /// Dot product of eigenvectors expanded to triplet form
+  /// to match unassembled stiffness matrices
+  MatrixXPS phim( (DE*DE)*topOpt->nLocElem, nev_conv );
+  for (long el = 0; el < topOpt->nLocElem; el++)
+  {
+    ArrayXPI eDof(DE);
+    for (int i = 0; i < NE; i++)
     {
-      if (!topOpt->regular)
-      {
-        mMat.setIdentity();
-        mMat *= 1.0/pow(2,topOpt->numDims)/topOpt->numDims *
-            topOpt->density * topOpt->elemSize(0);
-      }
-
-      /// Fill in the sensitivity dMdy
-      if (el < topOpt->nLocElem)
-      {
-        dMdy.segment(dMmarker, mVec.size()) = p_dVdy[el] * mVec;
-        dMmarker += mVec.size();
-      }
-
-      /// Loop over indices to fill in M
-      for (int n = 0; n < NE; n++) // Looping over rows
-      {
-        PetscInt node = topOpt->element(el,n);
-        if (node < topOpt->nLocNode) // If node is local to this process
-        {
-          nodeMat = p_V[el]*mMat.block(n*topOpt->numDims, n*topOpt->numDims,
-              topOpt->numDims, topOpt->numDims);
-          PetscInt row = topOpt->gNode(node);
-          ierr = MatSetValuesBlocked(M, 1, &row, 1, &row, nodeMat.data(), ADD_VALUES); CHKERRQ(ierr);
-        }
-      }
+    for (int j = 0; j < DN; j++)
+      eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
     }
 
-    ierr = MatAssemblyBegin(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-    ierr = VecRestoreArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
-    ierr = VecRestoreArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
-    ierr = MatAssemblyEnd(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-    ierr = MatDiagonalSet(M, topOpt->MLump, ADD_VALUES); CHKERRQ(ierr);
-
-    return 0;
+    for (int i = 0; i < DE; i++){
+    for (int j = 0; j < DE; j++){
+      phim.row( (DE*DE)*el + DE*i + j) =
+      topOpt->dynamicShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
+              topOpt->dynamicShape.block(eDof(i),0,1,nev_conv));
+    }
+    }
   }
+
+  /// Construct sensitivity of material stiffness matrix
+  const PetscScalar *p_dEdy;
+  ierr = VecGetArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
+  Eigen::Map< const Eigen::VectorXd > dEdy(p_dEdy, topOpt->nLocElem);
+  MatrixXPS dKdy;
+  if (topOpt->regular)
+  {
+    Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
+    dKdy = Eigen::kroneckerProduct(dEdy, ke);
+  }
+  else
+  {
+    /// TODO: COMBINE THIS AND PREVIOUS LOOP FOR EFFICIENCY
+    PetscInt ind = 0;
+    for (unsigned int el = 0; el < topOpt->ke.size(); el++)
+    ind += topOpt->ke[el].size();
+    dKdy.resize(ind, 1);
+    ind = 0;
+    Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
+    for (unsigned int el = 0; el < topOpt->ke.size(); el++)
+    {
+    new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
+    dKdy.block(ind, 0, ke.size(), 1) = dEdy(el)*ke;
+    }
+  }
+  ierr = VecRestoreArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
+
+  /// Construct sensitivity
+  MatrixXPS df = MatrixXPS::Zero((DE*DE)*topOpt->nLocElem,nvals);
+  for (short j = 0; j < nvals-1; j++)
+    df.col(j) += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy);
+  for (short j = nvals-1; j < nev_conv; j++)
+    df.col(nvals-1) += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy);
+  df.col(nvals-1) /= nev_conv-nvals+1;
+
+  for (long el = 0; el < topOpt->nLocElem; el++)
+    gradients.row(el) = df.block(el*(DE*DE), 0, (DE*DE), nvals).colwise().sum();
+
+  /// dCdrhof*drhofdrho
+  Vec dlamdy;
+  ierr = VecDuplicate( topOpt->dEdy, &dlamdy ); CHKERRQ(ierr);
+  for (short i = 0; i < nvals; i++)
+  {
+    ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
+    ierr = Chain_Filter( topOpt->P, dlamdy ); CHKERRQ(ierr);
+    ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
+  }
+  ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
+
+  return 0;
+}
+
+/********************************************************************/
+/**                Creates the diagonal mass matrix                **/
+/********************************************************************/
+PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
+{
+  PetscErrorCode ierr = 0;
+
+  // Mesh characteristics
+  const short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
+  // Track construction of Ks, dKs
+  long dMmarker = 0;
+
+  // Get pointers to Petsc vectors
+  const PetscScalar *p_V, *p_dVdy;
+  ierr = VecGetArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
+  ierr = VecGetArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
+
+  MatrixPS mMat = 1.0/pow(2,topOpt->numDims)/topOpt->numDims*
+      topOpt->elemSize(0)*topOpt->density*MatrixXPS::Identity(DE, DE);
+  Eigen::Map< VectorXPS > mVec(mMat.data(), mMat.size());
+  MatrixPS nodeMat(topOpt->numDims, topOpt->numDims);
+  /// Loop over elements
+  for (long el = 0; el < topOpt->element.rows(); el++)
+  {
+    if (!topOpt->regular)
+    {
+    mMat.setIdentity();
+    mMat *= 1.0/pow(2,topOpt->numDims)/topOpt->numDims *
+      topOpt->density * topOpt->elemSize(0);
+    }
+
+    /// Fill in the sensitivity dMdy
+    if (el < topOpt->nLocElem)
+    {
+    dMdy.segment(dMmarker, mVec.size()) = p_dVdy[el] * mVec;
+    dMmarker += mVec.size();
+    }
+
+    /// Loop over indices to fill in M
+    for (int n = 0; n < NE; n++) // Looping over rows
+    {
+    PetscInt node = topOpt->element(el,n);
+    if (node < topOpt->nLocNode) // If node is local to this process
+    {
+      nodeMat = p_V[el]*mMat.block(n*topOpt->numDims, n*topOpt->numDims,
+        topOpt->numDims, topOpt->numDims);
+      PetscInt row = topOpt->gNode(node);
+      ierr = MatSetValuesBlocked(M, 1, &row, 1, &row, nodeMat.data(), ADD_VALUES); CHKERRQ(ierr);
+    }
+    }
+  }
+
+  ierr = MatAssemblyBegin(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatDiagonalSet(M, topOpt->MLump, ADD_VALUES); CHKERRQ(ierr);
+
+  return 0;
 }

@@ -1916,10 +1916,6 @@ int TopOpt::Initialize_Vectors()
     ierr = VecDuplicate(U, &F); CHKERRQ(ierr);
     ierr = VecSet(F, 0.0); CHKERRQ(ierr);
 
-    // Eigenvectors
-    bucklingShape.setZero(node.size(), Stab_nev);
-    dynamicShape.setZero(node.size(), Dyn_nev);
-
     // Element ghost info
     ierr = VecCreateGhost(comm, nLocElem, nElem, gElem.size()-nLocElem,
                           gElem.data()+nLocElem, &V); CHKERRQ(ierr);
