@@ -60,7 +60,8 @@ private:
   PetscErrorCode ApplyOP(Vec x, Vec y, PetscInt level);
   // Coarse solver in multigrid
   PetscErrorCode Coarse_Solve();
-
+  // Output information
+  PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "JDMG found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
 };
 
 #endif // JDMG_H_INCLUDED

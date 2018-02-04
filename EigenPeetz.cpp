@@ -23,6 +23,7 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 PetscErrorCode EigenPeetz::Initialize()
 {
   PetscErrorCode ierr = 0;
+  ierr = PetscLogEventRegister("EIG_Compute", 0, &EIG_Compute); CHKERRQ(ierr);
   ierr = PetscLogEventRegister("EIG_Initialize", 0, &EIG_Initialize); CHKERRQ(ierr);
   ierr = PetscLogEventRegister("EIG_Prep", 0, &EIG_Prep); CHKERRQ(ierr);
   ierr = PetscLogEventRegister("EIG_Comp_Init", 0, &EIG_Comp_Init); CHKERRQ(ierr);

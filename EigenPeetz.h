@@ -14,6 +14,7 @@ typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixPS;
 typedef Eigen::Array<PetscScalar, -1, 1>  ArrayPS;
 #define MPI_PETSCINT MPIU_INT
 
+extern PetscLogEvent EIG_Compute;
 extern PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
 extern PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Setup_Coarse, EIG_Comp_Coarse;
 extern PetscLogEvent EIG_MGSetup, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
@@ -108,6 +109,9 @@ protected:
   PetscErrorCode Icgsm(Vec* Q, Mat M, Vec u, PetscScalar &r, PetscInt k);
   PetscErrorCode Mgsm(Vec* Q, Vec* Qm, Vec u, PetscInt k);
   PetscErrorCode GS(Vec* Q, Vec Mu, Vec u, PetscInt k);
+  // Output information
+  virtual PetscErrorCode Print_Status(PetscReal rnorm) {return PetscFPrintf(comm, output, "Iteration: %4i\tLambda Approx: %14.14g\tResidual: %4.4g\n", it, lambda(nev_conv), rnorm);}
+  virtual PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "Eigensolver found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
 
 };
 

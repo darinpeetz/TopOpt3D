@@ -26,7 +26,7 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 JDMG::JDMG(MPI_Comm comm)
 {
   this->comm = comm; Set_ID();
-  epstr = 1e-3;
+  epstr = 1e-5;
   PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &verbose, NULL);
   PetscFOpen(this->comm, "stdout", "w", &output);
   file_opened = 1;
@@ -590,7 +590,7 @@ PetscErrorCode JDMG::MGSetup(Vec f, PetscReal fnorm)
       if (fix < maxfix && OPx_norm > 10*fnorm && OPx_norm < oldnorm)
       {
         fix++;
-        PetscFPrintf(comm, output, "F norm: %8.8g\t, OP norm: %8.8g\t, old norm %8.8g\n", fnorm, OPx_norm, oldnorm);
+        PetscFPrintf(comm, output, "F norm: %8.8g, OP norm: %8.8g, old norm %8.8g\n", fnorm, OPx_norm, oldnorm);
         oldnorm = OPx_norm;
         ierr = PetscFPrintf(comm, output, "Bad shift parameter, increasing shift from %1.6g to %1.6g\n", sigma, sigma*10); CHKERRQ(ierr); 
         ierr = MatAXPY(K[ii], sigma-sigma_old, Bcopy[ii], SAME_NONZERO_PATTERN); CHKERRQ(ierr);

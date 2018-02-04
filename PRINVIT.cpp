@@ -7,6 +7,7 @@
 
 using namespace std;
 
+PetscLogEvent EIG_Compute;
 PetscLogEvent EIG_Initialize, EIG_Prep, EIG_Convergence, EIG_Expand, EIG_Update;
 PetscLogEvent EIG_Comp_Init, EIG_Hierarchy, EIG_Precondition, EIG_Jacobi, *EIG_ApplyOP;
 
@@ -141,9 +142,7 @@ PetscErrorCode PRINVIT::Set_Hierarchy(const std::vector<Mat> P, const std::vecto
 PetscErrorCode PRINVIT::Compute()
 {
   PetscErrorCode ierr = 0;
-  double compute_time = 0;
-  if (this->verbose >= 1)
-    compute_time = MPI_Wtime();
+  ierr = PetscLogEventBegin(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
   if (this->verbose >= 3)
     ierr = PetscFPrintf(comm, output, "Computing\n"); CHKERRQ(ierr);
 
@@ -210,8 +209,9 @@ PetscErrorCode PRINVIT::Compute()
 
       ierr = Update_Preconditioner(residual, rnorm, Au_norm); CHKERRQ(ierr);
 
-      if (this->verbose >= 2)
-        PetscFPrintf(comm, output, "Iteration: %4i\tLambda Approx: %14.14g\tResidual: %4.4g\n", it, theta, rnorm);
+      if (this->verbose >= 2){
+        ierr = Print_Status(rnorm); CHKERRQ(ierr);
+      }
       if (isnan(theta))
       {
 	if (false) // Optional printing of information of projected eigenproblem encounters NaN
@@ -281,10 +281,9 @@ PetscErrorCode PRINVIT::Compute()
         ierr = Compute_Clean(); CHKERRQ(ierr);
         if (this->verbose >= 1)
         {
-          compute_time = MPI_Wtime() - compute_time;
-          PetscFPrintf(comm, output, "PRINVIT found all %i eigenvalues in %i iterations, taking %1.6g seconds\n", 
-                      nev_conv, it, compute_time);
+          ierr = Print_Result(); CHKERRQ(ierr);
         }
+        ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
         return 0;
       }
     }
@@ -323,38 +322,46 @@ PetscErrorCode PRINVIT::Compute()
     ierr = PetscLogEventEnd(EIG_Update, 0, 0, 0, 0); CHKERRQ(ierr);
 
     ierr = PetscLogEventBegin(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
-    // Ensure orthogonality
-    ierr = Mgsm(Q[0], BQ[0], V[j], nev_conv+1); CHKERRQ(ierr);
-    ierr = Icgsm(V, B[0], V[j], orth_norm, j); CHKERRQ(ierr);
-    ierr = VecScale(V[j], 1/orth_norm); CHKERRQ(ierr);
+    // This loop is to prevent NaN breakdown
+    while (true)
+    {
+      // Ensure orthogonality
+      ierr = Mgsm(Q[0], BQ[0], V[j], nev_conv+1); CHKERRQ(ierr);
+      ierr = Icgsm(V, B[0], V[j], orth_norm, j); CHKERRQ(ierr);
+      ierr = VecScale(V[j], 1/orth_norm); CHKERRQ(ierr);
 
-    // Update search space
-    ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
-    ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
-    G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
-    ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
+      // Update search space
+      ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
+      ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
+      G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
+      ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
+      
+      if (isnan(G(j,j)))
+      {
+        ierr = VecSetRandom(V[j], NULL); CHKERRQ(ierr);
+      }
+      else
+        break;
+    }
 
     j++;
     if (it == maxit && eps/base_eps < 1000)
     {
       if (this->verbose >= 1)
-        PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, increasing tolerance to %1.2g\n",
-                     nev_conv, maxit, eps*=10);
+        PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, increasing tolerance to %1.2g\n", nev_conv, maxit, eps*=10);
       maxit += base_it;
     }
   }
   // Cleanup
   if (this->verbose >= 1)
   {
-    compute_time = MPI_Wtime() - compute_time;
-    PetscFPrintf(comm, output, "PRINVIT only found %i eigenvalues in %i iterations, taking %1.6g seconds\n",
-                nev_conv, it, compute_time);
-    PetscFPrintf(comm, output, "\tThe final residual value was %1.6g, and the approximate eigenvalue was %1.6g\n", rnorm, theta);
+    ierr = Print_Result(); CHKERRQ(ierr);
   }
   ierr = VecDestroy(&residual); CHKERRQ(ierr);
   ierr = Compute_Clean(); CHKERRQ(ierr);
   it = 0;
 
+  ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
   return 0;
 }
 

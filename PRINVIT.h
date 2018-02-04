@@ -83,6 +83,8 @@ protected:
   virtual PetscErrorCode ApplyOP(Vec x, Vec y, PetscInt level) = 0;
   // Coarse solver in multigrid
   virtual PetscErrorCode Coarse_Solve() = 0;
+  // Output information
+  virtual PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "PRINVIT found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
 
 };
 
