@@ -6,10 +6,11 @@
 #include <Eigen/Eigen>
 #include "MMA.h"
 #include "Functions.h"
-extern "C"
+/*extern "C"
 {
-#include "parmetis.h"
-}
+  #include "parmetis.h"
+}*/
+typedef int idx_t;
 
 typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
 typedef Eigen::Array<PetscInt, -1,  1> ArrayXPI;
@@ -139,11 +140,11 @@ public:
 
   /// Class methods
   // Constructors
-  TopOpt() {comm = MPI_COMM_WORLD; MPI_Info(); PrepLog();}
-  TopOpt(MPI_Comm comm) {this->comm = comm; MPI_Info(); PrepLog();}
+  TopOpt() {comm = MPI_COMM_WORLD; MPI_Set(); PrepLog();}
+  TopOpt(MPI_Comm comm) {this->comm = comm; MPI_Set(); PrepLog();}
   TopOpt(MPI_Comm comm, short numDims)
- 	{this->comm = comm; MPI_Info(); SetDimension(numDims); PrepLog();}
-  TopOpt(short numDims) {comm = MPI_COMM_WORLD; MPI_Info(); SetDimension(numDims);}
+ 	{this->comm = comm; MPI_Set(); SetDimension(numDims); PrepLog();}
+  TopOpt(short numDims) {comm = MPI_COMM_WORLD; MPI_Set(); SetDimension(numDims);}
   // Destructor
   ~TopOpt() {Clear();}
 
@@ -159,13 +160,19 @@ public:
               Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE);
 
   // Basic methods
-  void MPI_Info() {MPI_Comm_rank(comm, &myid); MPI_Comm_size(comm, &nprocs);}
-  void PrepLog();
+  void MPI_Set() {MPI_Comm_rank(comm, &myid); MPI_Comm_size(comm, &nprocs);}
+  PetscErrorCode PrepLog();
   void SetDimension(short numDims)
     { this->numDims = numDims; int pow2 = pow(2,numDims);
       B = new Eigen::MatrixXd[pow2]; G = new Eigen::MatrixXd[pow2];
       GT = new Eigen::MatrixXd[pow2]; W = new double[pow2]; }
-  void Clear();
+  PetscErrorCode Clear();
+
+  // Printing information
+  PetscErrorCode MeshOut ( );
+  PetscErrorCode MeshOut (TopOpt *topOpt);
+  PetscErrorCode StepOut ( const double &f, const Eigen::VectorXd &cons, int it );
+  PetscErrorCode ResultOut ( int it );
 
   // Mesh Creation
   void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,

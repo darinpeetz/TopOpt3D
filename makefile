@@ -30,13 +30,13 @@ TopOpt: $(patsubst %,${BUILD_DIR}/%.o, ${File_List})
 ${BUILD_DIR}/TopOpt.o: TopOpt.cpp TopOpt.h
 	${COMPILE} TopOpt.cpp -c -o ${BUILD_DIR}/TopOpt.o
 
-${BUILD_DIR}/Main.o: Main.cpp Inputs.h TopOpt.h MMA.h Functions.h
+${BUILD_DIR}/Main.o: Main.cpp TopOpt.h MMA.h Functions.h
 	${COMPILE} Main.cpp -c -o ${BUILD_DIR}/Main.o
 
-${BUILD_DIR}/Inputs.o: Inputs.cpp Inputs.h TopOpt.h MMA.h EigLab.h Functions.h
+${BUILD_DIR}/Inputs.o: Inputs.cpp TopOpt.h MMA.h EigLab.h Functions.h
 	${COMPILE} Inputs.cpp -c -o ${BUILD_DIR}/Inputs.o
 
-${BUILD_DIR}/RecMesh.o: RecMesh.cpp RecMesh.h TopOpt.h Inputs.h EigLab.h
+${BUILD_DIR}/RecMesh.o: RecMesh.cpp TopOpt.h EigLab.h
 	${COMPILE} RecMesh.cpp -c -o ${BUILD_DIR}/RecMesh.o
 
 ${BUILD_DIR}/Filter.o: Filter.cpp TopOpt.h

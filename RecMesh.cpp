@@ -5,8 +5,13 @@
 #include <Eigen/Eigen>
 #include <numeric>
 #include <unsupported/Eigen/KroneckerProduct>
-#include "Inputs.h"
+#include "TopOpt.h"
 #include "EigLab.h"
+
+extern "C"
+{
+  #include "parmetis.h"
+}
 
 using namespace std;
 

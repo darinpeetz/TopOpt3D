@@ -1,11 +1,10 @@
-#include "mpi.h"
 #include <Eigen/Eigen>
 #include <iostream>
 #include <fstream>
 #include "EigLab.h"
-#include "Inputs.h"
 #include "Functions.h"
 #include "Domain.h"
+#include "TopOpt.h"
 #include <cmath>
 
 using namespace std;
