@@ -88,6 +88,7 @@ EigenPeetz::EigenPeetz()
   eps = 1e-6;
   maxit = 500;
   verbose = 0;
+  file_opened = 0;
   PetscOptionsGetInt(NULL, NULL, "-EigenPeetz_Verbose", &verbose, NULL);
 }
 /******************************************************************************/
@@ -100,8 +101,7 @@ EigenPeetz::~EigenPeetz()
   for (unsigned int ii = 0; ii < B.size(); ii++)
     MatDestroy(B.data()+ii);
   VecDestroyVecs(nev_conv, &phi);
-  if (file_opened)
-    Close_File();
+  PetscErrorCode ierr = Close_File(); CHKERRV(ierr);
 }
 
 /******************************************************************************/
@@ -110,7 +110,6 @@ EigenPeetz::~EigenPeetz()
 PetscErrorCode EigenPeetz::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  Close_File();
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-EigenPeetz_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;
@@ -122,8 +121,7 @@ PetscErrorCode EigenPeetz::Set_Verbose(PetscInt verbose)
 PetscErrorCode EigenPeetz::Set_File(FILE *output)
 {
   PetscErrorCode ierr = 0;
-  if (file_opened)
-    ierr = Close_File(); CHKERRQ(ierr);
+  ierr = Close_File(); CHKERRQ(ierr);
   this->output = output;
   file_opened = false;
   return ierr;
@@ -135,8 +133,7 @@ PetscErrorCode EigenPeetz::Set_File(FILE *output)
 PetscErrorCode EigenPeetz::Open_File(const char filename[])
 {
   PetscErrorCode ierr = 0;
-  if (this->file_opened)
-    ierr = Close_File(); CHKERRQ(ierr);
+  ierr = Close_File(); CHKERRQ(ierr);
   ierr = PetscFOpen(comm, filename, "w", &output); CHKERRQ(ierr);
   file_opened = true;
   return ierr;

@@ -52,10 +52,10 @@ int main(int argc, char **args)
 
     bool Normalization = false, Reorder_Mesh = true;
     PetscInt mg_levels = 2, min_size = -1;
-    topOpt->Def_Param(optmma, topOpt, Dimensions, Nel, R, Normalization,
-                      Reorder_Mesh, mg_levels, min_size);
+    ierr = topOpt->Def_Param(optmma, topOpt, Dimensions, Nel, R, Normalization,
+                      Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
     mg_levels = max(mg_levels, 2);
-    topOpt->Set_Funcs();
+    ierr = topOpt->Set_Funcs(); CHKERRQ(ierr);
 
     /// Domain, Boundary Conditions, and initial design variables
     Eigen::VectorXd xIni;

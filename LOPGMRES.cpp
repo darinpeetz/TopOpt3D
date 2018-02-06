@@ -23,6 +23,7 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 LOPGMRES::LOPGMRES(MPI_Comm comm)
 {
   this->comm = comm; Set_ID();
+  nsweep = 2;
   PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose", &verbose, NULL);
   PetscFOpen(this->comm, "stdout", "w", &output);
   file_opened = 1;
@@ -41,7 +42,6 @@ LOPGMRES::~LOPGMRES()
 PetscErrorCode LOPGMRES::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  Close_File();
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;

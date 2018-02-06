@@ -179,8 +179,8 @@ public:
               ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
   PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                                ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
-  void Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
-  void ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
+  PetscErrorCode Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
+  PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
                     int nInterfaceNodes, FilterArrays &filterArrays,
                     ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels );
   idx_t ReorderParMetis( FilterArrays &filterArrays, bool Reorder_Mesh,
@@ -188,12 +188,12 @@ public:
                   double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
                   idx_t *elmwgt = NULL, idx_t wgtflag = 0, idx_t numflag = 0 );
 
-  void ElemDist(FilterArrays &filterArrays, Eigen::Array<idx_t, -1, 1> &partition);
-  void NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels);
-  void Expand_Elem();
-  void Expand_Node();
+  PetscErrorCode ElemDist(FilterArrays &filterArrays, Eigen::Array<idx_t, -1, 1> &partition);
+  PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels);
+  PetscErrorCode Expand_Elem();
+  PetscErrorCode Expand_Node();
   PetscErrorCode Initialize_Vectors();
-  void Localize();
+  PetscErrorCode Localize();
 
   // Finite Elements
   PetscErrorCode Initialize ( );

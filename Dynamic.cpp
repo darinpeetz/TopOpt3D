@@ -387,6 +387,10 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
 
   // Mesh characteristics
   const short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
+
+  // Make sure M is zeroed out
+  ierr = MatZeroEntries(M); CHKERRQ(ierr);
+
   // Track construction of Ks, dKs
   long dMmarker = 0;
 

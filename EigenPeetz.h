@@ -45,7 +45,7 @@ public:
   // Where to print the information
   PetscErrorCode Set_File(FILE *output); // For already opened files
   PetscErrorCode Open_File(const char filename[]); // For files to be opened within EigenPeetz
-  PetscErrorCode Close_File() {if (file_opened) {return PetscFClose(comm, output);} return 0;}
+  PetscErrorCode Close_File() {if (file_opened) {PetscErrorCode ierr = PetscFClose(comm, output); CHKERRQ(ierr);} return 0;}
   // Set operators of eigensystem
   PetscErrorCode Set_Operators(Mat A, Mat B);
   // Setting target eigenvalues and number to find

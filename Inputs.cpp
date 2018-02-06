@@ -299,7 +299,7 @@ PetscErrorCode TopOpt::Set_Funcs()
       else if (!line.compare(0,7,"Dynamic") || !line.compare(0,9,"Frequency"))
         func = FREQUENCY;
       else
-        SETERRQ(comm, PETSC_ERR_SUP, "Uknown function type specified");
+        SETERRQ1(comm, PETSC_ERR_SUP, "Unknown function type specified: %s", line.c_str());
       file >> line;
 
       // Function details
@@ -342,6 +342,12 @@ PetscErrorCode TopOpt::Set_Funcs()
           file >> line;
           continue;
         }
+        else if (!line.compare(0,3,"Nev"))
+        {
+          // To prevent errors from old input files
+          getline(file, line);
+          continue;
+        }  
         break;
       }
 

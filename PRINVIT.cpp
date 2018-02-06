@@ -50,7 +50,6 @@ PRINVIT::~PRINVIT()
 PetscErrorCode PRINVIT::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  Close_File();
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;

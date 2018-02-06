@@ -45,7 +45,6 @@ JDMG::~JDMG()
 PetscErrorCode JDMG::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  Close_File();
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;

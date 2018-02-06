@@ -22,7 +22,7 @@ typedef Eigen::Matrix<double,-1,-1,Eigen::RowMajor> MatrixXdRM;
 /*****************************************************************/
 /**                    Load Mesh for Restart                    **/
 /*****************************************************************/
-int TopOpt::LoadMesh(Eigen::VectorXd &xIni)
+PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
 {
   PetscErrorCode ierr = 0;
 
@@ -289,15 +289,6 @@ int TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   Initialize_Vectors();
 
   /// Local Element Numbering
-  /*edgeElem.col(0) -= elmdist(myid);
-  PetscInt *p_start = gNode.data(), *p_finish = gNode.data()+gNode.size();
-  for (int i = 0; i < edgeElem.rows(); i++)
-  {
-    if (edgeElem(i,1) == nElem)
-      edgeElem(i,1) = gElem.rows();
-    else
-      edgeElem(i,1) = std::find(p_start, p_finish, edgeElem(i,1)) - p_start;
-  }*/
   Localize();
 
   // Element sizes
@@ -386,8 +377,9 @@ int TopOpt::LoadMesh(Eigen::VectorXd &xIni)
 /*****************************************************************/
 /**                      Create Base Mesh                       **/
 /*****************************************************************/
-int TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
-                         double R, bool Reorder_Mesh, int mg_levels, PetscInt min_size )
+PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
+                                    double R, bool Reorder_Mesh, int mg_levels,
+                                    PetscInt min_size )
 {
   PetscErrorCode ierr = 0;
 
@@ -631,15 +623,17 @@ int TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
 /*****************************************************************/
 /**                          Edge Info                          **/
 /*****************************************************************/
-void TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
+PetscErrorCode TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
 {
+    PetscErrorCode ierr = 0;
+
     PetscInt Nel[3] = {last[0]-first[0], last[1]-first[1], last[2]-first[2]};
     PerimNormFactor = 0;
     for (short dim = 0; dim < numDims; dim++)
       PerimNormFactor += elemSize(0)/dx[dim];
 
     if (Nel[0] == 0 || Nel[1] == 0 || Nel[2] == 0)
-      return;
+      return ierr;
     /// dim == 0 => Edges with a normal in the x-direction
     /// dim == 1 => Edges with a normal in the y-direction
     /// dim == 2 => Edges with a normal in the z-direction
@@ -707,16 +701,17 @@ void TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
     // Restrict maximum element number to nElem;
     edgeElem = edgeElem.min(nElem*ArrayXXPI::Ones(edgeElem.rows(),edgeElem.cols()));
 
-    return;
+    return ierr;
 }
 
 /*****************************************************************/
 /**                  Cut Mesh if necessary                      **/
 /*****************************************************************/
-void TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
-                          int nInterfaceNodes, FilterArrays &filterArrays,
-                          ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels )
+PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
+                 int padding, int nInterfaceNodes, FilterArrays &filterArrays,
+                 ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels )
 {
+    PetscErrorCode ierr = 0;
     /// elem validity should be of size nLocElem, padding is the number of
     /// elements along the interfaces between processes, and nInterfaceNodes is
     /// the number of nodes on those interfaces
@@ -1289,7 +1284,7 @@ void TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
     nLocNode = node.rows();
     nNode = nddist(nprocs);
 
-    return;
+    return ierr;
 }
 
 /*****************************************************************/
@@ -1436,9 +1431,10 @@ idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
 /*****************************************************************/
 /**                    Redistribute elements                    **/
 /*****************************************************************/
-void TopOpt::ElemDist(FilterArrays &filterArrays,
+PetscErrorCode TopOpt::ElemDist(FilterArrays &filterArrays,
                       Eigen::Array<idx_t, -1, 1> &partition)
 {
+    PetscErrorCode ierr = 0;
     /// Reallocate elements
     /// Note abbreviations: senddisp = first element in array sent to each process
     /// sendcnt = how many elements sent to each process - TO BE REMOVED
@@ -1628,14 +1624,15 @@ void TopOpt::ElemDist(FilterArrays &filterArrays,
     MPI_Alltoallv(copyDouble.data(), sendcnt.data(), senddsp.data(),
                   MPI_DOUBLE, filterArrays.distances.data(), recvcnt.data(),
                   recvdsp.data(), MPI_DOUBLE, comm);
-    return;
+    return ierr;
 }
 
 /*****************************************************************/
 /**                      Node Distribution                      **/
 /*****************************************************************/
-void TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels)
+PetscErrorCode TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels)
 {
+    PetscErrorCode ierr = 0;
 
     /// Find which nodes each process interacts with
     Eigen::Array<short,-1,1> pckproc = Eigen::Array<short,-1,1>::Zero(nNode);
@@ -1715,14 +1712,16 @@ void TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, in
         cList[i](j) = invreorder(cList[i](j));
     }
 
-    return;
+    return ierr;
 }
 
 /*****************************************************************/
 /**      Capture surrounding elements on other processes        **/
 /*****************************************************************/
-void TopOpt::Expand_Elem()
+PetscErrorCode TopOpt::Expand_Elem()
 {
+  PetscErrorCode ierr = 0;
+
   /// Make a list of all elements with non-local nodes and where to send them
   /// nonLocal contains the element number followed by each of its nodes, listed
   /// consecutively for each process, so that it is ready to send upon completion
@@ -1817,14 +1816,16 @@ void TopOpt::Expand_Elem()
   delete[] nonLocalNums;
   delete[] nonLocalElems;
 
-  return;
+  return ierr;
 }
 
 /*****************************************************************/
 /**       Capture surrounding nodes on other processes          **/
 /*****************************************************************/
-void TopOpt::Expand_Node()
+PetscErrorCode TopOpt::Expand_Node()
 {
+  PetscErrorCode ierr = 0;
+
   /// List of all the nodes the local elements need
   ArrayXPI ndlist = Eigen::Map<ArrayXPI>(element.data(),element.size());
   EigLab::Unique(ndlist, 1);
@@ -1895,15 +1896,15 @@ void TopOpt::Expand_Node()
   gNode.conservativeResize(node.rows());
   gNode.segment(nLocNode, ndlist.rows()) = ndlist;
 
-  return;
+  return ierr;
 }
 
 /*****************************************************************/
 /**       Set up ghost communications for PEtSc vectors         **/
 /*****************************************************************/
-int TopOpt::Initialize_Vectors()
+PetscErrorCode TopOpt::Initialize_Vectors()
 {
-    PetscErrorCode ierr;
+    PetscErrorCode ierr = 0;
     // Nodal ghost info
     ArrayXXPIRM ghosts( gNode.size()-nLocNode, numDims );
     ghosts.col(0) = numDims*gNode.segment( nLocNode,gNode.size()-nLocNode );
@@ -1929,14 +1930,16 @@ int TopOpt::Initialize_Vectors()
     ierr = VecCreateMPI(comm, nLocElem, nElem, &x); CHKERRQ(ierr);
     ierr = VecDuplicate(x, &rho); CHKERRQ(ierr);
 
-    return 0;
+    return ierr;
 }
 
 /*****************************************************************/
 /**       Convert global numberings to local numberings         **/
 /*****************************************************************/
-void TopOpt::Localize()
+PetscErrorCode TopOpt::Localize()
 {
+    PetscErrorCode ierr = 0;
+
     /// Convert elements to local node numbers
     PetscInt *start = gNode.data(), *finish = gNode.data()+gNode.size();
     for (PetscInt i = 0; i < element.rows(); i++)
@@ -1960,5 +1963,5 @@ void TopOpt::Localize()
         edgeElem(i,1) = std::find(start, finish, edgeElem(i,1)) - gElem.data();
     }
 
-    return;
+    return ierr;
 }

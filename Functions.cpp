@@ -25,9 +25,20 @@ Function_Base::Function_Base(std::vector<PetscScalar> &values, PetscScalar min_v
 PetscErrorCode Function_Base::Compute(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
+  if (topOpt->verbose >= 2)
+  {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Calling %s function\n",
+                        name[this->func_type]); CHKERRQ(ierr);
+  }
   ierr = Function(topOpt); CHKERRQ(ierr);
 
   // Calculate combined function value and gradient
+  if (topOpt->verbose >= 3)
+  {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output,
+                        "Tabulating results of %s function\n",
+                         name[this->func_type]); CHKERRQ(ierr);
+  }
   value = 0; gradient.setZero();
   for (PetscInt i = 0; i < weights.size(); i++)
   {
