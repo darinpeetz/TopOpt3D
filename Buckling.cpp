@@ -81,8 +81,9 @@ double t0 = MPI_Wtime();
 ierr = PetscFPrintf(topOpt->comm, timings, "LOPGMRES took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
 t0 = MPI_Wtime();
 
+EPS eps;
 {
-  EPS eps; ST st; KSP ksp; PC pc, JUNK;
+  ST st; KSP ksp; PC pc, JUNK;
   ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
   ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
   ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
@@ -143,9 +144,8 @@ t0 = MPI_Wtime();
   ierr = PCDestroy(&JUNK); CHKERRQ(ierr);
   ierr = MatAssemblyBegin(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = EPSDestroy(&eps); CHKERRQ(ierr);
+  //ierr = EPSDestroy(&eps); CHKERRQ(ierr);
 }
-
 ierr = PetscFPrintf(topOpt->comm, timings, "LOBPCG took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
 t0 = MPI_Wtime();
 
@@ -313,6 +313,11 @@ ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
   }
 
   /// Construct adjoint vectors to be solved
+  if (topOpt->verbose >= 2)
+  {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Preparing to solve buckling"
+                        " adjoint equations\n"); CHKERRQ(ierr);
+  }
   MatrixXPS dKsdU = MatrixXPS::Zero(topOpt->node.size(), nev_conv);
   v.resize(dKsdU.rows(), dKsdU.cols());
   const PetscScalar *p_Es;
@@ -368,8 +373,14 @@ ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
     ierr = KSPGetConvergedReason(topOpt->KUF, &reason); CHKERRQ(ierr);
     if (topOpt->verbose >= 1)
     {
-    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint equation #%i converged in %i iterations with reason: %i\n",
-              i, its, reason); CHKERRQ(ierr);
+      ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
+                    "equation #%i converged in %i iterations with reason: %i\n",
+                    i, its, reason); CHKERRQ(ierr);
+    }
+    else
+    {
+      ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
+                    "equation #%i failed with reason %i", i, reason); CHKERRQ(ierr);
     }
     ierr = VecGhostUpdateBegin(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
     ierr = VecGhostUpdateEnd(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
