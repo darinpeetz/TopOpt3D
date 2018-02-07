@@ -121,7 +121,11 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
     else
     {
       if (!line.compare(0,9,"[/Params]"))
+      {
+        ierr = PetscOptionsGetInt(NULL, NULL, "-Verbose", &verbose, NULL);
+               CHKERRQ(ierr);
         return ierr;
+      }
       else if (!line.compare(0,10,"Dimensions"))
       {
         getline(file, line);
