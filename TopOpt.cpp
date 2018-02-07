@@ -328,25 +328,25 @@ PetscErrorCode TopOpt::ResultOut ( int it )
   PetscViewer output;
   char filename[30];
 
-  sprintf(filename, "U_pen_%1.3g.bin", this->penal);
+  sprintf(filename, "U_pen%1.4g.bin", this->penal);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->U, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename,"x_pen_%1.3g.bin", this->penal);
+  sprintf(filename, "x_pen%1.4g.bin", this->penal);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->x, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename,"V_pen_%1.3g.bin", this->penal);
+  sprintf(filename, "V_pen%1.4g.bin", this->penal);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->V, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename,"E_pen_%1.3g.bin", this->penal);
+  sprintf(filename, "E_pen%1.4g.bin", this->penal);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->E, output); CHKERRQ(ierr);
@@ -354,7 +354,7 @@ PetscErrorCode TopOpt::ResultOut ( int it )
 
   for (int i = 0; i < this->bucklingShape.cols(); i++)
   {
-    sprintf(filename,"phiB_pen_%1.3f_mode_%i.bin", this->penal, i);
+    sprintf(filename,"phiB_pen%1.4g_mode%i.bin", this->penal, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,
         this->numDims*this->nNode, this->bucklingShape.data() +
@@ -368,7 +368,7 @@ PetscErrorCode TopOpt::ResultOut ( int it )
 
   for (int i = 0; i < this->dynamicShape.cols(); i++)
   {
-    sprintf(filename,"phiD_pen_%1.3f_mode_%i.bin", this->penal, i);
+    sprintf(filename,"phiD_pen%1.4g_mode%i.bin", this->penal, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,
         this->numDims*this->nNode, this->dynamicShape.data() +
