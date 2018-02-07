@@ -358,7 +358,7 @@ PetscErrorCode PRINVIT::Compute()
   }
   ierr = VecDestroy(&residual); CHKERRQ(ierr);
   ierr = Compute_Clean(); CHKERRQ(ierr);
-  it = 0;
+  it--;
 
   ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
   return 0;
