@@ -15,14 +15,19 @@ class MMA
     public:
         MMA() {miniter = 0; minchange = 0; iter = 0; Set_Defaults(); return;}
         MMA( ulong nvar ) { Set_n(nvar); Initialize(); iter = 0; Set_Defaults(); return;}
-        void Set_Defaults() { epsimin = 1e-7; raa0 = 1e-5; mmamove = 0.5; albefa = 0.1;
-                               asyinit = 0.5; asyincr = 1.2; asydecr = 0.7;}
+        void Set_Defaults() { epsimin = 1e-7; raa0 = 1e-5; mmamove = 0.5;
+                              albefa = 0.1; asyinit = 0.5; asyincr = 1.2;
+                              asydecr = 0.7; fresh_start = true;}
         void Initialize();
-        void Set_Comm( MPI_Comm Mcomm ){ Comm = Mcomm; MPI_Comm_rank(Comm, &myid); MPI_Comm_size(Comm, &nproc); return; }
-        void Set_n( ulong nvar ) { nloc = nvar; MPI_Allreduce(&nloc, &n, 1, MPI_LONG, MPI_SUM, Comm); Initialize(); return; }
+        void Set_Comm( MPI_Comm Mcomm ){ Comm = Mcomm; MPI_Comm_rank(Comm, &myid);
+                                         MPI_Comm_size(Comm, &nproc); return; }
+        void Set_n( ulong nvar ) { nloc = nvar; MPI_Allreduce(&nloc, &n, 1,
+                                   MPI_LONG, MPI_SUM, Comm); Initialize(); return; }
         void Set_m( uint mval );
-        void Set_Lower_Bound( evecxd XM ) { xmin = XM; }                                                                               //Set lower bound of design variables
-        void Set_Upper_Bound( evecxd XU ) { xmax = XU; }                                                                               //Set upper bound of design variables
+        //Set lower bound of design variables
+        void Set_Lower_Bound( evecxd XM ) { xmin = XM; }
+        //Set upper bound of design variables
+        void Set_Upper_Bound( evecxd XU ) { xmax = XU; } 
         void Set_Constants( double a0val, double b0val, Eigen::VectorXd &aval,
                             Eigen::VectorXd &cval, Eigen::VectorXd &dval )
                             { a0 = a0val; b0 = b0val; a = aval; c = cval; d = dval; }
@@ -31,19 +36,21 @@ class MMA
         void Set_Iter_Limit_Max( uint maximum ) { maxiter = maximum; }
         void Set_Change_Limit( double minimum ) { minchange = minimum; }
         void Set_Step_Limit( double step ) { mmamove = step; }
-        void Set_Init_Values( evecxd xIni ) {xval = xIni; xold1 = xIni; xold2 = xIni;}
+        void Set_Init_Values( evecxd xIni ) { xval = xIni; xold1 = xIni;
+                                              xold2 = xIni; }
         void Set_It(uint it) {iter = it; return;}
+        void Restart() {fresh_start = true; return;}
 
         ulong  &Get_nloc() {return nloc;}
         ulong  &Get_n()    {return n;}
         uint   &Get_m()    {return m;}
         evecxd &Get_x()    {return xval;}
-        uint   &Get_it()   {return iter;}
+        uint   &Get_It()   {return iter;}
 
         int mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
         bool Check(){ return (Check_Conv() || Check_It()); }
         bool Check_Conv(){ return ((iter > miniter) && (Change<minchange)); }
-        bool Check_It() {return ++iter>maxiter;}
+        bool Check_It() {return ++iter>=maxiter;}
         int Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
         void OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
 
@@ -80,6 +87,8 @@ class MMA
         Eigen::VectorXd xval, xold1, xold2;
         /// Iteration counter
         uint iter;
+        /// Flag if moving asymptotes don't have history yet
+        bool fresh_start;
         /// Convergence values
         uint maxiter, miniter;
         double kkttol, minchange;

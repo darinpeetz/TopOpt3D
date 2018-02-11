@@ -75,13 +75,14 @@ int MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
 {
     int ierr = 0;
     /// Asymptote Calculation (low and upp)
-    if (iter < 2.5)
+    if (fresh_start && iter < 3)
     {
         low = xval-asyinit*(xmax-xmin);
         upp = xval+asyinit*(xmax-xmin);
     }
     else
     {
+        fresh_start = false;
         zzz = (xval-xold1).cwiseProduct(xold1-xold2);
         factor = Eigen::VectorXd::Ones(nloc);
         for (uint i = 0; i < nloc; i++)
