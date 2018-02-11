@@ -147,7 +147,7 @@ int main(int argc, char **args)
       } while ( !optmma->Check() );
 
       /// Print result after this penalization
-      topOpt->ResultOut(optmma->Get_it());
+      topOpt->ResultOut(optmma->Get_It());
     }
 
     /// Print out all function values if desired
