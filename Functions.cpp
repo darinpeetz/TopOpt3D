@@ -7,7 +7,8 @@ const char *Function_Base::name[] = {"Compliance", "Perimeter", "Volume", "Stabi
 /******************************************************************************/
 /**                       Function_Base constructor                          **/
 /******************************************************************************/
-Function_Base::Function_Base(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient)
+Function_Base::Function_Base(std::vector<PetscScalar> &values, PetscScalar min_val,
+                  PetscScalar max_val, PetscBool objective, PetscBool calc_gradient)
 {
   nvals = values.size();
   this->values = VectorXPS::Zero(nvals);
@@ -54,7 +55,8 @@ PetscErrorCode Function_Base::Compute(TopOpt *topOpt)
 /******************************************************************************/
 /**                 Assemble function values and gradients                   **/
 /******************************************************************************/
-PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f, Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
+PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
+               Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
   PetscErrorCode ierr = 0;
 

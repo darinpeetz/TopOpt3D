@@ -376,14 +376,15 @@ int TopOpt::FESolve( )
   ierr = KSPGetConvergedReason(this->KUF, &reason); CHKERRQ(ierr);
   if (this->verbose >= 1)
   {
+    PetscInt its;
+    ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
     if (reason < 0)
     {
-      PetscFPrintf(comm, output, "Solve for displacements failed, reason: %i\n", reason);
+      PetscFPrintf(comm, output, "Solve for displacements failed after %i iterations,"
+                                 " reason: %i\n", its, reason);
     }
     else
     {
-      PetscInt its;
-      ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
       ierr = PetscFPrintf(comm, output, "Solve for displacements converged in %i iterations with reason: %i\n",
                          its, reason); CHKERRQ(ierr);
     }

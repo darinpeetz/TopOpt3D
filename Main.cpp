@@ -14,6 +14,8 @@ using namespace std;
 
 static char help[] = "The topology optimization routine we deserve, but not the one we need right now.\n\n";
 
+#define PETSC_ERR_PRINT_STEP 101
+
 int main(int argc, char **args)
 {
     /// MPI Variables
@@ -98,7 +100,7 @@ int main(int argc, char **args)
                   topOpt->penal); CHKERRQ(ierr);
 
       optmma->Set_It(0);
-      topOpt->MatIntFnc( optmma->Get_x() );
+      ierr = topOpt->MatIntFnc( optmma->Get_x() ); CHKERRQ(ierr);
       ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       if (topOpt->needK)
       {
@@ -123,9 +125,9 @@ int main(int argc, char **args)
       do
       {
         ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        optmma->Update( dfdx, g, dgdx );
+        ierr = optmma->Update( dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        topOpt->MatIntFnc( optmma->Get_x() );
+        ierr = topOpt->MatIntFnc( optmma->Get_x() ); CHKERRQ(ierr);
         ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         if (topOpt->needK)
         {

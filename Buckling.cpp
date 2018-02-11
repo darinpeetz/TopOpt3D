@@ -68,7 +68,7 @@ double t0 = MPI_Wtime();
   // Set target eigenvalues
   Nev_Type target_type = UNIQUE_LAST_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
-  lopgmres.Set_MaxIt(MaxIt);
+  lopgmres.Set_MaxIt(3*MaxIt);
   lopgmres.Set_Cycle(FMGCycle);
   lopgmres.Set_Tol(tol);
   // Compute the eigenvalues
@@ -87,7 +87,7 @@ EPS eps;
   ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
   ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
   ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
-  ierr = EPSSetTolerances(eps, tol, MaxIt); CHKERRQ(ierr);
+  ierr = EPSSetTolerances(eps, tol, 2*MaxIt); CHKERRQ(ierr);
   // Setting up krylov ST structure
   ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
   ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);

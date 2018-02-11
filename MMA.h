@@ -40,24 +40,24 @@ class MMA
         evecxd &Get_x()    {return xval;}
         uint   &Get_it()   {return iter;}
 
-        void mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+        int mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
         bool Check(){ return (Check_Conv() || Check_It()); }
         bool Check_Conv(){ return ((iter > miniter) && (Change<minchange)); }
         bool Check_It() {return ++iter>maxiter;}
-        void Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+        int Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
         void OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
 
 
 
 
     private:
-        void DualSolve();
+        int  DualSolve();
         void DualResidual(Eigen::VectorXd &hvec, Eigen::VectorXd &eta,
                            Eigen::VectorXd &lambda, Eigen::VectorXd &epsvecm);    // For internal calls
         void XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z, Eigen::VectorXd &lambda);
-        void DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
+        int  DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
                       Eigen::VectorXd &y, double &z, Eigen::VectorXd &grad);
-        void DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
+        int  DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
                       Eigen::VectorXd &ux3, Eigen::VectorXd &xl3,
                       Eigen::VectorXd &x,   Eigen::MatrixXd &Hess);
         void SearchDir(Eigen::MatrixXd &Hess, Eigen::VectorXd &hvec,

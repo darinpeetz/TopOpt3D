@@ -27,8 +27,9 @@ void MMA::Set_m( uint mval )
     return;
 }
 
-void MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
 {
+    int ierr = 0;
     /// At some point I plan to correctly implement OC-type update for simple problems
     Set_m(g.size());
     if (m < 2)
@@ -38,8 +39,8 @@ void MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dg
         mmasub(dfdx, g, dgdx);
     }
     else
-        mmasub(dfdx, g, dgdx);
-    return;
+        ierr = mmasub(dfdx, g, dgdx);
+    return ierr;
 }
 
 void MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
@@ -70,8 +71,9 @@ void MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
     return;
 }
 
-void MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+int MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
 {
+    int ierr = 0;
     /// Asymptote Calculation (low and upp)
     if (iter < 2.5)
     {
@@ -86,7 +88,7 @@ void MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dg
         {
             if (zzz[i] > 0)
                 factor[i] = asyincr;
-            else
+            else if(zzz[i] < 0)
                 factor[i] = asydecr;
         }
         low = xval - factor.cwiseProduct(xold1-low);
@@ -170,21 +172,22 @@ void MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dg
     b -= g;
 
     xold2 = xold1; xold1 = xval;
-    ///Solving the subproblem by a primal-dual Newton Method
+    ///Solving the subproblem by a primal-dual Newton Method (or not)
     if (nproc > 1)
     {
-        DualSolve();
+        ierr = DualSolve();
     }
     else
-        DualSolve();
+        ierr = DualSolve();
 
     Change = ((xval-xold1).cwiseQuotient(xmax-xmin)).cwiseAbs().maxCoeff();
-    MPI_Allreduce(MPI_IN_PLACE,&Change,1,MPI_DOUBLE,MPI_MAX,Comm);
-    return;
+    ierr = MPI_Allreduce(MPI_IN_PLACE,&Change,1,MPI_DOUBLE,MPI_MAX,Comm);
+    return ierr;
 }
 
-void MMA::DualSolve()
+int MMA::DualSolve()
 {
+    int ierr = 0;
     /// Dual Solver as described in Aage and Lazarov (2013)
     double epsi = 1, Theta;
 
@@ -207,7 +210,7 @@ void MMA::DualSolve()
     xl1   = x-low;
     xl2   = xl1.cwiseProduct(xl1);
     xl3   = xl1.cwiseProduct(xl2);
-    DualGrad(ux1, xl1, y, z, Grad);
+    ierr = DualGrad(ux1, xl1, y, z, Grad); if (ierr!=0) {return ierr;}
 
     while (epsi > epsimin)
     {
@@ -220,7 +223,7 @@ void MMA::DualSolve()
         {
             ittt++;
 
-            DualHess(ux2, xl2, ux3, xl3, x, Hess);
+            ierr = DualHess(ux2, xl2, ux3, xl3, x, Hess); if (ierr!=0) {return ierr;}
 
             SearchDir(Hess, Grad, lambda, eta, dellam, deleta, epsvec);
             Theta = SearchDis(lambda, eta, dellam, deleta);
@@ -239,7 +242,7 @@ void MMA::DualSolve()
             ux3     = ux2.cwiseProduct(ux1);
             xl3     = xl2.cwiseProduct(xl1);
 
-            DualGrad(ux1, xl1, y, z, Grad);
+            ierr = DualGrad(ux1, xl1, y, z, Grad); if (ierr!=0) {return ierr;}
 
             DualResidual(Grad, eta, lambda, epsvec);
         }
@@ -247,7 +250,7 @@ void MMA::DualSolve()
     }
     xval = x;
 
-    return;
+    return ierr;
 }
 
 void MMA::DualResidual(Eigen::VectorXd &Grad, Eigen::VectorXd &eta,
@@ -279,23 +282,25 @@ void MMA::XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z, Eigen::Vec
     return;
 }
 
-void MMA::DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
+int MMA::DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
                    Eigen::VectorXd &y, double &z, Eigen::VectorXd &grad)
 {
+    int ierr = 0;
     /// fi(x(lambda))+b
     for (uint i = 0; i < m; i++)
         grad(i) = (P.col(i).cwiseQuotient(ux1) + Q.col(i).cwiseQuotient(xl1)).sum();
-    MPI_Allreduce(MPI_IN_PLACE, grad.data(), m, MPI_DOUBLE, MPI_SUM, Comm);
+    ierr = MPI_Allreduce(MPI_IN_PLACE, grad.data(), m, MPI_DOUBLE, MPI_SUM, Comm);
     /// -b-a*z(lambda)-y(lambda)
     grad -= b + a*z + y;
 
-    return;
+    return ierr;
 }
 
-void MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
+int MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
                    Eigen::VectorXd &ux3, Eigen::VectorXd &xl3,
                    Eigen::VectorXd &x,   Eigen::MatrixXd &Hess)
 {
+    int ierr = 0;
     Eigen::MatrixXd dhdx(m,nloc);
 
     for (uint i = 0; i < m; i++)
@@ -314,7 +319,7 @@ void MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
     ///dLdyy and dLdzz are identity matrices of size m and 1, respectively
 
     Hess = -dhdx*dLdxx.asDiagonal()*dhdx.transpose();
-    MPI_Allreduce(MPI_IN_PLACE, Hess.data(), m*m, MPI_DOUBLE, MPI_SUM, Comm);
+    ierr = MPI_Allreduce(MPI_IN_PLACE, Hess.data(), m*m, MPI_DOUBLE, MPI_SUM, Comm);
 
     Eigen::VectorXd Hessdy = Eigen::VectorXd::Zero(m);
     for (uint i = 0; i < m; i++)
@@ -325,7 +330,7 @@ void MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
     if (lambda.dot(a) > 0)
         Hess -= 10*(a*a.transpose());
 
-    return;
+    return ierr;
 }
 
 void MMA::SearchDir(Eigen::MatrixXd &Hess, Eigen::VectorXd &Grad,
