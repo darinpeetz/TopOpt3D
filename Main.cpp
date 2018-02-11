@@ -112,7 +112,7 @@ int main(int argc, char **args)
       ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      topOpt->StepOut(f, g, optmma->Get_it());
+      topOpt->StepOut(f, g, optmma->Get_It()+1);
 
   /*ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
   delete topOpt;
@@ -123,7 +123,7 @@ int main(int argc, char **args)
       do
       {
         ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-        optmma->Update( dfdx, g, dgdx );
+        ierr = optmma->Update( dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         topOpt->MatIntFnc( optmma->Get_x() );
         ierr = PetscLogEventBegin(topOpt->FEEvent, 0, 0, 0, 0); CHKERRQ(ierr);
@@ -140,7 +140,7 @@ int main(int argc, char **args)
         ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
 
-        topOpt->StepOut(f, g, optmma->Get_it());
+        topOpt->StepOut(f, g, optmma->Get_It()+1);
 
       } while ( !optmma->Check() );
 

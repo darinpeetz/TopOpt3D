@@ -73,20 +73,21 @@ void MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
 void MMA::mmasub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
 {
     /// Asymptote Calculation (low and upp)
-    if (iter < 2.5)
+    if (fresh_start && iter < 3)
     {
         low = xval-asyinit*(xmax-xmin);
         upp = xval+asyinit*(xmax-xmin);
     }
     else
     {
+        fresh_start = false;
         zzz = (xval-xold1).cwiseProduct(xold1-xold2);
         factor = Eigen::VectorXd::Ones(nloc);
         for (uint i = 0; i < nloc; i++)
         {
             if (zzz[i] > 0)
                 factor[i] = asyincr;
-            else
+            else if (zzz[i] < 0)
                 factor[i] = asydecr;
         }
         low = xval - factor.cwiseProduct(xold1-low);
