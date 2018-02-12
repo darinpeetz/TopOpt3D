@@ -10,6 +10,9 @@
 using namespace std;
 typedef Eigen::Matrix<double, -1, -1, Eigen::RowMajor> MatrixXdRM;
 
+/****************************************************************/
+/**         Find next numerical value in string of text        **/
+/****************************************************************/
 void Find_Next_Digit(const char *line, unsigned short &offset, int length)
 {
   offset = max((unsigned short)0,offset);
@@ -19,6 +22,9 @@ void Find_Next_Digit(const char *line, unsigned short &offset, int length)
   return;
 }
 
+/****************************************************************/
+/**     Get numerical values from a line in the input file     **/
+/****************************************************************/
 vector<double> Get_Values(string line)
 {
   unsigned short offset = 0;
@@ -36,6 +42,9 @@ vector<double> Get_Values(string line)
   return vals;
 }
 
+/****************************************************************/
+/**  Set the boundary conditions using definitions from below  **/
+/****************************************************************/
 PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
           Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE)
 {
@@ -91,14 +100,15 @@ PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
   return ierr;
 }
 
-PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
-                       ArrayXPI &Nel, double &R, bool &Normalization,
-                       bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
+/****************************************************************/
+/**       Set various parameters/options from input file       **/
+/****************************************************************/
+PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
+               ArrayXPI &Nel, double &R, bool &Normalization,
+               bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
 {
   PetscErrorCode ierr = 0;
-  topOpt->smoother = "chebyshev";
-  topOpt->verbose = 1;
-  topOpt->folder = "";
+
   // Variables needed for parsing input file
   ifstream file(filename.c_str());
   if (!file.is_open())
@@ -120,13 +130,14 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
     }
     else
     {
-      if (!line.compare(0,9,"[/Params]"))
-      {
-        ierr = PetscOptionsGetInt(NULL, NULL, "-Verbose", &verbose, NULL);
-               CHKERRQ(ierr);
+      // Convert to all uppercase to avoid captilization errors
+      for (string::size_type i = 0; i < line.length(); ++i)
+        line[i] = toupper(line[i]);
+
+      // Check which option is being set
+      if (!line.compare(0,9,"[/PARAMS]"))
         return ierr;
-      }
-      else if (!line.compare(0,10,"Dimensions"))
+      else if (!line.compare(0,10,"DIMENSIONS"))
       {
         getline(file, line);
         offset = 0;
@@ -156,7 +167,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
         }
         Nel = Eigen::Map<ArrayXPI>(temp.data(), temp.size());
       }
-      else if (!line.compare(0,3,"Nu0"))
+      else if (!line.compare(0,3,"NU0"))
       {
         file >> line;
         Nu0 = strtod(line.c_str(), NULL);
@@ -166,12 +177,12 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
         file >> line;
         E0 = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,7,"Density"))
+      else if (!line.compare(0,7,"DENSITY"))
       {
         file >> line;
         density = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,7,"Penalty"))
+      else if (!line.compare(0,7,"PENALTY"))
       {
         file >> line;
         pmin = strtod(line.c_str(), NULL);
@@ -180,7 +191,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
         file >> line;
         pmax = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,7,"RFactor"))
+      else if (!line.compare(0,7,"RFACTOR"))
       {
         file >> line;
         R = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
@@ -190,50 +201,50 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
         file >> line;
         R = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,14,"Min_Iterations"))
+      else if (!line.compare(0,14,"MIN_ITERATIONS"))
       {
         file >> line;
         optmma->Set_Iter_Limit_Min(strtol(line.c_str(), NULL, 0));
       }
-      else if (!line.compare(0,14,"Max_Iterations"))
+      else if (!line.compare(0,14,"MAX_ITERATIONS"))
       {
         file >> line;
         optmma->Set_Iter_Limit_Max(strtol(line.c_str(), NULL, 0));
       }
-      else if (!line.compare(0,9,"KKT_Limit"))
+      else if (!line.compare(0,9,"KKT_LIMIT"))
       {
         file >> line;
         optmma->Set_KKT_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,12,"Change_Limit"))
+      else if (!line.compare(0,12,"CHANGE_LIMIT"))
       {
         file >> line;
         optmma->Set_Change_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,10,"Step_Limit"))
+      else if (!line.compare(0,10,"STEP_LIMIT"))
       {
         file >> line;
         optmma->Set_Step_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,13,"Normalization"))
+      else if (!line.compare(0,13,"NORMALIZATION"))
       {
         Normalization = true;
       }
-      else if (!line.compare(0,18,"No_Mesh_Reordering"))
+      else if (!line.compare(0,18,"NO_MESH_REORDERING"))
       {
         Reorder_Mesh = false;
       }
-      else if (!line.compare(0,9,"MG_Levels"))
+      else if (!line.compare(0,9,"MG_LEVELS"))
       {
         file >> line;
         mg_levels = strtol(line.c_str(), NULL, 0);
       }
-      else if (!line.compare(0,15,"MG_Min_Mat_Size"))
+      else if (!line.compare(0,15,"MG_MIN_MAT_SIZE"))
       {
         file >> line;
         min_size = strtol(line.c_str(), NULL, 0);
       }
-      else if (!line.compare(0,14,"MG_Coarse_Size"))
+      else if (!line.compare(0,14,"MG_COARSE_SIZE"))
       {
         file >> line;
         int c_size = strtol(line.c_str(), NULL, 0);
@@ -244,19 +255,24 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
         temp /= Nel.size();
         mg_levels = ceil(temp)+1;
       }
-      else if (!line.compare(0,8,"Smoother"))
+      else if (!line.compare(0,8,"SMOOTHER"))
       {
-        file >> topOpt->smoother;
+        file >> this->smoother;
       }
-      else if (!line.compare(0,7,"Verbose"))
+      else if (!line.compare(0,7,"VERBOSE"))
       {
         file >> line;
-        topOpt->verbose = strtol(line.c_str(), NULL, 0);
+        this->verbose = strtol(line.c_str(), NULL, 0);
       }
-      else if (!line.compare(0,6,"Folder") || !line.compare(0,7,"Restart"))
+      else if (!line.compare(0,6,"FOLDER") || !line.compare(0,7,"RESTART"))
       {
         file.ignore();
-        getline(file, topOpt->folder);
+        getline(file, this->folder);
+      }
+      else if (!line.compare(0,5,"PRINT_EVERY"))
+      {
+        file >> line;
+        print_every = strtol(line.c_str(), NULL, 0);
       }
 
       file >> line;
@@ -266,6 +282,21 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &D
   return ierr;
 }
 
+/****************************************************************/
+/**                Get options from command line               **/
+/****************************************************************/
+PetscErrorCode TopOpt::Get_CL_Options()
+{
+  PetscErrorCode ierr = 0;
+  ierr = PetscOptionsGetInt(NULL, NULL, "-Verbose", &verbose, NULL); CHKERRQ(ierr);
+  ierr = PetscOptionsGetInt(NULL, NULL, "-Print_Every", &print_every, NULL);
+         CHKERRQ(ierr);
+  return ierr;
+}
+
+/****************************************************************/
+/**                Set the optimization functions              **/
+/****************************************************************/
 PetscErrorCode TopOpt::Set_Funcs()
 {
   PetscErrorCode ierr = 0;
@@ -381,6 +412,9 @@ PetscErrorCode TopOpt::Set_Funcs()
   return ierr;
 }
 
+/****************************************************************/
+/**             Check if elements should be removed            **/
+/****************************************************************/
 PetscErrorCode TopOpt::Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
             Eigen::Array<bool, -1, 1> &elemValidity)
 {
@@ -390,6 +424,9 @@ PetscErrorCode TopOpt::Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Bo
   return ierr;
 }
 
+/****************************************************************/
+/**                 Define boundary conditions                 **/
+/****************************************************************/
 PetscErrorCode TopOpt::Def_BC()
 {
   PetscErrorCode ierr = 0;

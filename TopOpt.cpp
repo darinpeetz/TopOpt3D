@@ -1,9 +1,32 @@
 #include "mpi.h" // Has to precede Petsc includes to use MPI::BOOL
 #include "TopOpt.h"
 #include <fstream>
+#include <climits>
 
 using namespace std;
 
+/*****************************************************************/
+/**           Initialization done by each constructor           **/
+/*****************************************************************/
+PetscErrorCode TopOpt::Initialize()
+{
+  PetscErrorCode ierr = 0;
+
+  smoother = "chebyshev";
+  verbose = 1;
+  folder = "";
+  print_every = INT_MAX;
+  last_print = 1;
+
+  ierr = PrepLog(); CHKERRQ(ierr);
+  MPI_Set();
+
+  return ierr;
+}
+
+/*****************************************************************/
+/**                     Set up the loggers                      **/
+/*****************************************************************/
 PetscErrorCode TopOpt::PrepLog()
 {
   PetscErrorCode ierr = 0;
@@ -13,6 +36,9 @@ PetscErrorCode TopOpt::PrepLog()
   return ierr;
 }
 
+/*****************************************************************/
+/**                Clear out the data structures                **/
+/*****************************************************************/
 PetscErrorCode TopOpt::Clear()
 { 
   PetscErrorCode ierr = 0;
@@ -40,7 +66,10 @@ PetscErrorCode TopOpt::Clear()
   return ierr;
 }
 
-PetscErrorCode TopOpt::MeshOut ( )
+/*****************************************************************/
+/**                Print out the mesh information               **/
+/*****************************************************************/
+PetscErrorCode TopOpt::MeshOut()
 {
   PetscErrorCode ierr = 0;
   ofstream file;
@@ -291,11 +320,15 @@ PetscErrorCode TopOpt::MeshOut ( )
   return 0;
 }
 
+/*****************************************************************/
+/**              Print out result of a single step              **/
+/*****************************************************************/
 PetscErrorCode TopOpt::StepOut ( const double &f,
                                  const Eigen::VectorXd &cons, int it )
 {
   PetscErrorCode ierr = 0;
 
+  // Print out total objective and constraint values
   ierr = PetscFPrintf(this->comm, this->output, "Iteration number: %u\tObjective: %1.6g\n",
               it, f); CHKERRQ(ierr);
   ierr = PetscFPrintf(this->comm, this->output, "Constraints:\n"); CHKERRQ(ierr);
@@ -303,11 +336,32 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
   {
     ierr = PetscFPrintf(this->comm, this->output, "%1.12g\t", cons(i)); CHKERRQ(ierr);
   }
-  ierr = PetscFPrintf(this->comm, this->output, "\n\n"); CHKERRQ(ierr);
 
+  // Print out value of each called function
+  ierr = PetscFPrintf(this->comm, this->output, "\nAll function values:\n"); CHKERRQ(ierr);
+  for (unsigned int i = 0; i < function_list.size(); i++)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "\t%s: %1.8g\n",
+                        Function_Base::name[this->function_list[i]->func_type],
+                        this->function_list[i]->Get_Value()); CHKERRQ(ierr);
+  }
+  ierr = PetscFPrintf(this->comm, this->output, "\n"); CHKERRQ(ierr);
+
+
+  // Print out values at every step if desired
+  if ((print_every - last_print++) == 0)
+  {
+    char name_suffix[30];
+    sprintf(name_suffix, "_pen%1.4g_it%i", this->penal, it);
+    ierr = PrintVals(name_suffix); CHKERRQ(ierr);
+    last_print = 1;
+  }
   return ierr;
 }
 
+/*****************************************************************/
+/**        Print out result of a penalization increment         **/
+/*****************************************************************/
 PetscErrorCode TopOpt::ResultOut ( int it )
 {
   PetscErrorCode ierr = 0;
@@ -316,37 +370,48 @@ PetscErrorCode TopOpt::ResultOut ( int it )
   PetscScalar Esum, Vsum;
   ierr = VecSum(this->E, &Esum); CHKERRQ(ierr);
   ierr = VecSum(this->V, &Vsum); CHKERRQ(ierr);
-  ierr = PetscFPrintf(this->comm, this->output, "************************************************\n");
-  ierr = PetscFPrintf(this->comm, this->output, "After %4i iterations with a penalty of %1.4g the\n",
-              it, this->penal); CHKERRQ(ierr);
-  ierr = PetscFPrintf(this->comm, this->output, "ratio of stiffness sum to volume sum is %1.4g\n",
-              Esum/Vsum); CHKERRQ(ierr);
-  ierr = PetscFPrintf(this->comm, this->output, "************************************************\n\n");
+  ierr = PetscFPrintf(this->comm, this->output, "********************************"
+         "****************\nAfter %4i iterations with a penalty of %1.4g the\n"
+         "ratio of stiffness sum to volume sum is %1.4g\n" "*********************"
+         "***************************\n\n", it, this->penal, Esum/Vsum);
+         CHKERRQ(ierr);
 
-  stringstream pen;
-  pen << this->penal;
-  PetscViewer output;
+  char name_suffix[30];
+  sprintf(name_suffix, "_pen%1.4g", this->penal);
+  ierr = PrintVals(name_suffix); CHKERRQ(ierr);
+  last_print = 0;
+
+  return ierr;
+}
+
+/*****************************************************************/
+/**         The actual printing of optimization state           **/
+/*****************************************************************/
+PetscErrorCode TopOpt::PrintVals ( char *name_suffix )
+{
+  PetscErrorCode ierr = 0;
   char filename[30];
+  PetscViewer output;
 
-  sprintf(filename, "U_pen%1.4g.bin", this->penal);
+  sprintf(filename, "U%s.bin", name_suffix);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->U, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename, "x_pen%1.4g.bin", this->penal);
+  sprintf(filename, "x%s.bin", name_suffix);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->x, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename, "V_pen%1.4g.bin", this->penal);
+  sprintf(filename, "V%s.bin", name_suffix);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->V, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  sprintf(filename, "E_pen%1.4g.bin", this->penal);
+  sprintf(filename, "E%s.bin", name_suffix);
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->E, output); CHKERRQ(ierr);
@@ -354,7 +419,7 @@ PetscErrorCode TopOpt::ResultOut ( int it )
 
   for (int i = 0; i < this->bucklingShape.cols(); i++)
   {
-    sprintf(filename,"phiB_pen%1.4g_mode%i.bin", this->penal, i);
+    sprintf(filename,"phiB%s_mode%i.bin", name_suffix, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,
         this->numDims*this->nNode, this->bucklingShape.data() +
@@ -368,7 +433,7 @@ PetscErrorCode TopOpt::ResultOut ( int it )
 
   for (int i = 0; i < this->dynamicShape.cols(); i++)
   {
-    sprintf(filename,"phiD_pen%1.4g_mode%i.bin", this->penal, i);
+    sprintf(filename,"phiD_%s_mode%i.bin", name_suffix, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,
         this->numDims*this->nNode, this->dynamicShape.data() +
@@ -380,5 +445,5 @@ PetscErrorCode TopOpt::ResultOut ( int it )
     ierr = VecDestroy(&phi); CHKERRQ(ierr);
   }
 
-  return 0;
+  return ierr;
 }

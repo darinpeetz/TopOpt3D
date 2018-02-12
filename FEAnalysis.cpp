@@ -10,7 +10,7 @@ typedef Eigen::Map< Eigen::RowVectorXd, Eigen::Unaligned,
                     Eigen::InnerStride<-1> > Bmap;
 typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 
-int TopOpt::Initialize ( ) // Set up the stiffness matrix and solver context
+int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
 {
   PetscErrorCode ierr = 0;
   if (this->verbose >= 3)

@@ -67,13 +67,13 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
     ierr = topOpt->function_list[ii]->Compute(topOpt); CHKERRQ(ierr);
     if (topOpt->function_list[ii]->objective == PETSC_TRUE)
     {
-      f += topOpt->function_list[ii]->Get_Value();
-      dfdx += topOpt->function_list[ii]->Get_Gradient();
+      f += topOpt->function_list[ii]->value;
+      dfdx += topOpt->function_list[ii]->gradient;
     }
     else
     {
-      g(constraint) = topOpt->function_list[ii]->Get_Value();
-      dgdx.col(constraint) = topOpt->function_list[ii]->Get_Gradient();
+      g(constraint) = topOpt->function_list[ii]->value;
+      dgdx.col(constraint) = topOpt->function_list[ii]->gradient;
       constraint++;
     }
   }

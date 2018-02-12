@@ -48,10 +48,11 @@ int main(int argc, char **args)
 
     bool Normalization = false, Reorder_Mesh = true;
     PetscInt mg_levels = 2, min_size = -1;
-    ierr = topOpt->Def_Param(optmma, topOpt, Dimensions, Nel, R, Normalization,
+    ierr = topOpt->Def_Param(optmma, Dimensions, Nel, R, Normalization,
                       Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
     mg_levels = max(mg_levels, 2);
     ierr = topOpt->Set_Funcs(); CHKERRQ(ierr);
+    ierr = topOpt->Get_CL_Options(); CHKERRQ(ierr);
 
     /// Domain, Boundary Conditions, and initial design variables
     Eigen::VectorXd xIni;
@@ -69,7 +70,7 @@ int main(int argc, char **args)
     }
 
     // Write out the mesh to file
-    topOpt->MeshOut( );
+    ierr = topOpt->MeshOut(); CHKERRQ(ierr);
 
     /// Design Variable Initialization
     optmma->Set_Lower_Bound( Eigen::VectorXd::Constant(topOpt->nLocElem, 0) );
@@ -77,9 +78,9 @@ int main(int argc, char **args)
     optmma->Set_Init_Values( xIni );
     optmma->Set_n( topOpt->nLocElem );
 
-    /// Optimize
+    /// Initialze functions and FEM structures
     cout.precision(12);
-    topOpt->Initialize();
+    topOpt->FEInitialize();
     PetscInt ncon = 0;
     for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++)
     {
@@ -94,6 +95,7 @@ int main(int argc, char **args)
     for (unsigned int i = 0; i < topOpt->function_list.size(); i++){
       ierr = topOpt->function_list[i]->Initialize_Arrays(topOpt->nLocElem); CHKERRQ(ierr); }
 
+    /// Optimize
     for ( ; topOpt->penal <= topOpt->pmax; topOpt->penal += topOpt->pstep )
     {
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\nPenalty increased to %1.3g\n",

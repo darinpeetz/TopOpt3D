@@ -57,101 +57,171 @@ class TopOpt
   /// Class variables - Setting all to public for now, but may like to change this later
 public:
 
-  MPI_Comm comm;                               //MPI communicator
-  int myid;                                    //Rank of this process
-  int nprocs;                                  //Total number of processes
-  std::string filename;                        //Input file name
-  int verbose;                                 //How much information to print
-  FILE* output;                                //File for outputing information
-  std::string folder;                          //Location of files for restart
+  //MPI communicator
+  MPI_Comm comm;
+  //Rank of this process
+  int myid;
+  //Total number of processes
+  int nprocs;
+  //Input file name
+  std::string filename;
+  //How much information to print
+  int verbose;
+  //How often to output results
+  int print_every, last_print;
+  //File for outputing information
+  FILE* output;
+  //Location of files for restart
+  std::string folder;
 
   /// Mesh variables
-  short numDims;                               //Dimensionality of problem
-  MatrixXdRM node;                             //Nodal coordinate
-  ArrayXXPIRM element;                         //Element Node numbers
-  ArrayXPI elmdist;                            //How elements are distributed on processes
-  ArrayXPI nddist;                             //How nodes are distributed on processes
-  PetscInt nNode, nElem, nEdges;               //Total number of nodes, elements, and edges
-  PetscInt nLocElem, nLocNode;                 //Number of local nodes and elements
-  ArrayXPI gElem, gNode;                       //Global numbering of elements and nodes stored locally
-  Eigen::VectorXd elemSize;                    //Element sizes in m^numDims
-  Eigen::VectorXd edgeSize;                    //Size of Edges in m^(numDims-1)
-  ArrayXXPIRM edgeElem;                        //Elements on each edge.
-  bool regular;                                // Flag to indicate if all elements are identical
+  //Dimensionality of problem
+  short numDims;
+  //Nodal coordinate
+  MatrixXdRM node;
+  //Element Node numbers
+  ArrayXXPIRM element;
+  //How elements are distributed on processes
+  ArrayXPI elmdist;
+  //How nodes are distributed on processes
+  ArrayXPI nddist;
+  //Total number of nodes, elements, and edges
+  PetscInt nNode, nElem, nEdges;
+  //Number of local nodes and elements
+  PetscInt nLocElem, nLocNode;
+  //Global numbering of elements and nodes stored locally
+  ArrayXPI gElem, gNode;
+  //Element sizes in m^numDims
+  Eigen::VectorXd elemSize;
+  //Size of Edges in m^(numDims-1)
+  Eigen::VectorXd edgeSize;
+  //Elements on each edge
+  ArrayXXPIRM edgeElem;
+  //Flag to indicate if all elements are identical
+  bool regular;
 
   /// FEM setup variables - only used for FEM initialization
-  double Nu0, E0;                              //Element characteristics, E0 in Pa
-  double density;                              //Element density in kg/m
-  ArrayXPI suppNode;                           //Support node numbers
-  Eigen::Array<bool,-1, -1, Eigen::RowMajor> supports; //Boolean indicating if dof is fixed or not
-  ArrayXPI springNode;                         //Spring Support node numbers
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> springs;//Spring dof stiffnesses in Pa
-  ArrayXPI loadNode;                           //Load nodes
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> loads;//Loads values in N
-  ArrayXPI massNode;                           //Lumped mass nodes
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> masses;//mass values in kg
+  //Element characteristics, E0 in Pa
+  double Nu0, E0;
+  //Element density in kg/m
+  double density;
+  //Support node numbers
+  ArrayXPI suppNode;
+  //Boolean indicating if dof is fixed or not
+  Eigen::Array<bool,-1, -1, Eigen::RowMajor> supports;
+  //Spring Support node numbers
+  ArrayXPI springNode;
+  //Spring dof stiffnesses in Pa
+  Eigen::Array<double, -1, -1, Eigen::RowMajor> springs;
+  //Load nodes
+  ArrayXPI loadNode;
+  //Loads values in N
+  Eigen::Array<double, -1, -1, Eigen::RowMajor> loads;
+  //Lumped mass nodes
+  ArrayXPI massNode;
+  //mass values in kg
+  Eigen::Array<double, -1, -1, Eigen::RowMajor> masses;
 
   /// FEM solution variables - used in each FEM iteration
-  Eigen::MatrixXd d;                           //Constitutive Matrix
-  double detJ;                                 //Element Jacobian
-  Eigen::MatrixXd *B, *G, *GT;                 //B and G matrices for assembling stiffness matrices
-  double *W;                                   //Integration point weights
-  std::vector<double> k;                       //Indices of local k matrix for constructing global K matrix
-  std::vector<PetscInt> i, j, e;               //Triplet information for assembling stiffness matrix
-  std::vector<Eigen::MatrixXd> ke;             //Vector of values for individual elements
-  Vec F;                                       //Force vector
-  Vec U;                                       //Vector of displacements from fem problem
-  ArrayXPI freeDof;                            //Global indices of free local dofs
-  ArrayXPI fixedDof;                           //Global indices of fixed local dofs
-  ArrayXPI springDof;                          //Global indices of local dofs with springs
-  ArrayXPI springlessDof;                      //Global indices of local dofs without springs
-  PetscInt nFreeDof;                           //Total number of free dofs
-  PetscInt nFixDof;                            //Total number of fixed dofs
-  PetscInt nSpringDof;                         //Number of dofs with springs attached
-  ArrayXXPI dofs;                              //Vector containing every dof number
-  Mat spK;                                     //Sparse matrix used to store stiffness of springs
-  Vec spKVec;                                  //Vector representing diagonal of spring matrix
-  Mat K;                                       //Sparse K used to solve fem problem
-  std::vector<Mat> PR;                         //Interpolation/Restriction matrices
-  std::vector<MPI_Comm> MG_comms;              //Communicator for each level of MG hierarchy
-  std::string smoother;                        //Smoother to use with multigrid preconditioners
-  Vec MLump;                                   //Storing point masses
-  KSP KUF;                                     //The FEM solver context
-  KSP dynamicKSP;                              //Solver context for dynamic ST
-  KSP bucklingKSP;                             //Solver context for buckling ST
-  bool direct;                                 //Flag to use direct instead of iterative solver
+  //Constitutive Matrix
+  Eigen::MatrixXd d;
+  // Element Jacobian
+  double detJ;
+  //B and G matrices for assembling stiffness matrices
+  Eigen::MatrixXd *B, *G, *GT;
+  //Integration point weights
+  double *W;
+  //Indices of local k matrix for constructing global K matrix
+  std::vector<double> k;
+  //Triplet information for assembling stiffness matrix
+  std::vector<PetscInt> i, j, e;
+  //Vector of values for individual elements
+  std::vector<Eigen::MatrixXd> ke;
+  //Force vector
+  Vec F;
+  //Vector of displacements from fem problem
+  Vec U;
+  //Global indices of free local dofs
+  ArrayXPI freeDof;
+  //Global indices of fixed local dofs
+  ArrayXPI fixedDof;
+  //Global indices of local dofs with springs
+  ArrayXPI springDof;
+  //Global indices of local dofs without springs
+  ArrayXPI springlessDof;
+  //Total number of free dofs
+  PetscInt nFreeDof;
+  //Total number of fixed dofs
+  PetscInt nFixDof;
+  //Number of dofs with springs attached
+  PetscInt nSpringDof;
+  //Vector containing every dof number
+  ArrayXXPI dofs;
+  //Sparse matrix used to store stiffness of springs
+  Mat spK;
+  //Vector representing diagonal of spring matrix
+  Vec spKVec;
+  //Sparse K used to solve fem problem
+  Mat K;
+  //Interpolation/Restriction matrices
+  std::vector<Mat> PR;
+  //Communicator for each level of MG hierarchy
+  std::vector<MPI_Comm> MG_comms;
+  //Smoother to use with multigrid preconditioners
+  std::string smoother;
+  //Storing point masses
+  Vec MLump;
+  //The FEM solver context
+  KSP KUF;
+  //Solver context for dynamic ST
+  KSP dynamicKSP;
+  //Solver context for buckling ST
+  KSP bucklingKSP;
+  //Flag to use direct instead of iterative solver
+  bool direct;
 
   /// Function information
   std::vector<Function_Base*> function_list;
   PetscBool needK, needU;
 
   /// Optimization variables
-  double penal, pmin, pmax, pstep;             //penalization factor information
-  Mat P;                                       //Filter Matrix
-  Vec V, dVdy, E, dEdy, Es, dEsdy;             //Material Interpolation Values
-  Vec x, rho;                                  //Raw densities and filtered densities, rho = P*x
-  PetscScalar PerimNormFactor;                 //For normalizing perimeter;
-  Eigen::MatrixXd bucklingShape, dynamicShape; //Eigenvectors
-  Vec *bucklingDeflate, *dynamicDeflate;       //Deflation spaces for eigenvalue problems
-  PetscInt bucklingIt, dynamicIt;              //Number of iterations for eigenvalue problems
+  //penalization factor information
+  double penal, pmin, pmax, pstep;
+  //Filter Matrix
+  Mat P;
+  //Material Interpolation Values
+  Vec V, dVdy, E, dEdy, Es, dEsdy;
+  //Raw densities and filtered densities, rho = P*x
+  Vec x, rho;                                  
+  //For normalizing perimeter
+  PetscScalar PerimNormFactor;
+  //Eigenvectors
+  Eigen::MatrixXd bucklingShape, dynamicShape;
+  //Deflation spaces for eigenvalue problems
+  Vec *bucklingDeflate, *dynamicDeflate;
+  //Number of iterations for eigenvalue problems
+  PetscInt bucklingIt, dynamicIt;
 
   /// Profiling variables
   int funcEvent, FEEvent, UpdateEvent;
 
   /// Class methods
   // Constructors
-  TopOpt() {comm = MPI_COMM_WORLD; MPI_Set(); PrepLog();}
-  TopOpt(MPI_Comm comm) {this->comm = comm; MPI_Set(); PrepLog();}
+  TopOpt() {comm = MPI_COMM_WORLD; Initialize();}
+  TopOpt(MPI_Comm comm) {this->comm = comm; Initialize();}
   TopOpt(MPI_Comm comm, short numDims)
- 	{this->comm = comm; MPI_Set(); SetDimension(numDims); PrepLog();}
-  TopOpt(short numDims) {comm = MPI_COMM_WORLD; MPI_Set(); SetDimension(numDims);}
+ 	{this->comm = comm; SetDimension(numDims); Initialize();}
+  TopOpt(short numDims) {comm = MPI_COMM_WORLD; SetDimension(numDims); Initialize();}
+  // Initialization done by each constructor
+  PetscErrorCode Initialize();
   // Destructor
   ~TopOpt() {Clear();}
 
   // Parsing the input file
-  PetscErrorCode Def_Param(MMA *optmma, TopOpt *topOpt, Eigen::VectorXd &Dimensions,
+  PetscErrorCode Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
                  ArrayXPI &Nel, double &Rfactor, bool &Normalization,
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
+  PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
   PetscErrorCode Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
               Eigen::Array<bool, -1, 1> &elemValidity);
@@ -173,6 +243,7 @@ public:
   PetscErrorCode MeshOut (TopOpt *topOpt);
   PetscErrorCode StepOut ( const double &f, const Eigen::VectorXd &cons, int it );
   PetscErrorCode ResultOut ( int it );
+  PetscErrorCode PrintVals ( char *name_suffix );
 
   // Mesh Creation
   void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
@@ -203,7 +274,7 @@ public:
   PetscErrorCode Localize();
 
   // Finite Elements
-  PetscErrorCode Initialize ( );
+  PetscErrorCode FEInitialize ( );
   PetscErrorCode FESolve ( );
   PetscErrorCode FEAssemble( );
   PetscErrorCode MatIntFnc ( const Eigen::VectorXd &y );
