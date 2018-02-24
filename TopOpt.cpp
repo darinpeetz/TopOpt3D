@@ -324,38 +324,45 @@ PetscErrorCode TopOpt::MeshOut()
 /**              Print out result of a single step              **/
 /*****************************************************************/
 PetscErrorCode TopOpt::StepOut ( const double &f,
-                                 const Eigen::VectorXd &cons, int it )
+                    const Eigen::VectorXd &cons, int it, long nactive )
 {
   PetscErrorCode ierr = 0;
-
-  // Print out total objective and constraint values
-  ierr = PetscFPrintf(this->comm, this->output, "Iteration number: %u\tObjective: %1.6g\n",
-              it, f); CHKERRQ(ierr);
-  ierr = PetscFPrintf(this->comm, this->output, "Constraints:\n"); CHKERRQ(ierr);
-  for (short i = 0; i < cons.size(); i++)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "%1.12g\t", cons(i)); CHKERRQ(ierr);
-  }
-
-  // Print out value of each called function
-  ierr = PetscFPrintf(this->comm, this->output, "\nAll function values:\n"); CHKERRQ(ierr);
-  for (unsigned int i = 0; i < function_list.size(); i++)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "\t%s: %1.8g\n",
-                        Function_Base::name[this->function_list[i]->func_type],
-                        this->function_list[i]->Get_Value()); CHKERRQ(ierr);
-  }
-  ierr = PetscFPrintf(this->comm, this->output, "\n"); CHKERRQ(ierr);
-
+  PetscInt totactive = nactive;
+  MPI_Request request;
+  ierr = MPI_Iallreduce(MPI_IN_PLACE, &totactive, 1, MPI_PETSCINT, MPI_SUM,
+            comm, &request); CHKERRQ(ierr);
 
   // Print out values at every step if desired
   if ((print_every - last_print++) == 0)
   {
     char name_suffix[30];
-    sprintf(name_suffix, "_pen%1.4g_it%i", this->penal, it);
+    sprintf(name_suffix, "_pen%1.4g_it%i", penal, it);
     ierr = PrintVals(name_suffix); CHKERRQ(ierr);
     last_print = 1;
   }
+
+  ierr = MPI_Wait(&request, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  // Print out total objective and constraint values
+  ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", f); CHKERRQ(ierr);
+  ierr = PetscFPrintf(comm, output, "Active design variables: %i\n", nactive);
+          CHKERRQ(ierr);
+  ierr = PetscFPrintf(comm, output, "Objective: %1.6g\n", f); CHKERRQ(ierr);
+  ierr = PetscFPrintf(comm, output, "Constraints:\n"); CHKERRQ(ierr);
+  for (short i = 0; i < cons.size(); i++)
+  {
+    ierr = PetscFPrintf(comm, output, "\t%1.12g\t", cons(i)); CHKERRQ(ierr);
+  }
+
+  // Print out value of each called function
+  ierr = PetscFPrintf(comm, output, "\nAll function values:\n"); CHKERRQ(ierr);
+  for (unsigned int i = 0; i < function_list.size(); i++)
+  {
+    ierr = PetscFPrintf(comm, output, "\t%12s: %1.8g\n",
+                        Function_Base::name[function_list[i]->func_type],
+                        function_list[i]->Get_Value()); CHKERRQ(ierr);
+  }
+  ierr = PetscFPrintf(comm, output, "\n"); CHKERRQ(ierr);
+
   return ierr;
 }
 

@@ -14,11 +14,10 @@ void MMA::Initialize()
 {
   /// These variables are usually not going to change, but the user should have the option
   zzz.resize(nloc);
-  alfa.resize(nloc);
-  beta.resize(nloc);
   low.resize(nloc);
   upp.resize(nloc);
-  xval.setZero(nloc);
+  if (xval.size() != nloc)
+    xval.setZero(nloc);
   xold1 = xval; xold2 = xval;
   active.resize(nloc);
   fill(active.begin(), active.end(), true);
@@ -199,8 +198,8 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
     p_x2 = &x2;
     p_xmin = &xmin_act;
     p_xmax = &xmax_act;
-    p_low = &low;
-    p_upp = &upp;
+    p_low = &low_act;
+    p_upp = &upp_act;
   }
 
   /// Asymptote Calculation (low and upp)
@@ -239,6 +238,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   /// Calculation of the bounds alfa and beta
   Eigen::VectorXd zzz1 = *p_low + albefa*(*p_x-*p_low);
   Eigen::VectorXd zzz2 = *p_x - mmamove*(*p_xmax-*p_xmin);
+  alfa.resize(nactive);
   for (uint i = 0; i < nactive; i++)
   {
     zzz(i) = std::max(zzz1(i),zzz2(i));
@@ -246,6 +246,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   }
   zzz1 = *p_upp - albefa*(*p_upp-*p_x);
   zzz2 = *p_x + mmamove*(*p_xmax-*p_xmin);
+  beta.resize(nactive);
   for (uint i = 0; i < nactive; i++)
   {
     zzz(i) = std::min(zzz1(i),zzz2(i));

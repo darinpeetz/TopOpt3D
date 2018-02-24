@@ -61,7 +61,7 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
   PetscErrorCode ierr = 0;
 
   int constraint = 0;
-  f = 0; dfdx.setZero();
+  f = 0; dfdx.setZero(topOpt->nLocElem); dgdx.setZero(topOpt->nLocElem, dgdx.cols());
   for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++)
   {
     ierr = topOpt->function_list[ii]->Compute(topOpt); CHKERRQ(ierr);
@@ -77,6 +77,18 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
       constraint++;
     }
   }
+
+  int ind = 0;
+  for (int ii = 0; ii < topOpt->nLocElem; ii++)
+  {
+    if (topOpt->active(ii)) {
+      dfdx(ind) = dfdx(ii);
+      dgdx.row(ind) = dgdx.row(ii);
+      ind++;
+    }
+  }
+  dfdx.conservativeResize(ind);
+  dgdx.conservativeResize(ind, dgdx.cols());
 
   return ierr;
 }

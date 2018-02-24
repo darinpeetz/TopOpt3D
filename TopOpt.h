@@ -192,7 +192,9 @@ public:
   //Material Interpolation Values
   Vec V, dVdy, E, dEdy, Es, dEsdy;
   //Raw densities and filtered densities, rho = P*x
-  Vec x, rho;                                  
+  Vec x, rho;
+  //Active vs. passive elements
+  Eigen::Array<bool, -1, 1> active;
   //For normalizing perimeter
   PetscScalar PerimNormFactor;
   //Eigenvectors
@@ -241,7 +243,8 @@ public:
   // Printing information
   PetscErrorCode MeshOut ( );
   PetscErrorCode MeshOut (TopOpt *topOpt);
-  PetscErrorCode StepOut ( const double &f, const Eigen::VectorXd &cons, int it );
+  PetscErrorCode StepOut ( const double &f, const Eigen::VectorXd &cons,
+                           int it, long nactive );
   PetscErrorCode ResultOut ( int it );
   PetscErrorCode PrintVals ( char *name_suffix );
 
@@ -251,12 +254,13 @@ public:
   PetscErrorCode LoadMesh(Eigen::VectorXd &xIni);
   PetscErrorCode CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel, double R,
                    bool Reorder_Mesh, PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
-          ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels );
+  PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last,
+                      ArrayXPI Nel, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                      ArrayXPI *cList, PetscInt mg_levels );
   PetscErrorCode Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
               ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
   PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                               ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
+                         ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
   PetscErrorCode Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
   PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
                     int nInterfaceNodes, FilterArrays &filterArrays,
@@ -266,8 +270,10 @@ public:
                   double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
                   idx_t *elmwgt = NULL, idx_t wgtflag = 0, idx_t numflag = 0 );
 
-  PetscErrorCode ElemDist(FilterArrays &filterArrays, Eigen::Array<idx_t, -1, 1> &partition);
-  PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels);
+  PetscErrorCode ElemDist(FilterArrays &filterArrays,
+                          Eigen::Array<idx_t, -1, 1> &partition);
+  PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                          ArrayXPI *cList, int mg_levels);
   PetscErrorCode Expand_Elem();
   PetscErrorCode Expand_Node();
   PetscErrorCode Initialize_Vectors();
@@ -278,6 +284,7 @@ public:
   PetscErrorCode FESolve ( );
   PetscErrorCode FEAssemble( );
   PetscErrorCode MatIntFnc ( const Eigen::VectorXd &y );
+
 private:
   Eigen::MatrixXd LocalK ( PetscInt el );
   Eigen::ArrayXXd GaussPoints( );

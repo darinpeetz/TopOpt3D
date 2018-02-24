@@ -75,7 +75,7 @@ int main(int argc, char **args)
     /// Design Variable Initialization
     optmma->Set_Lower_Bound( Eigen::VectorXd::Constant(topOpt->nLocElem, 0) );
     optmma->Set_Upper_Bound( Eigen::VectorXd::Ones(topOpt->nLocElem) );
-    optmma->Set_Init_Values( xIni );
+    optmma->Set_Values( xIni );
     optmma->Set_n( topOpt->nLocElem );
 
     /// Initialze functions and FEM structures
@@ -116,7 +116,8 @@ int main(int argc, char **args)
       ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      topOpt->StepOut(f, g, optmma->Get_It()+1);
+      ierr = topOpt->StepOut(f, g, optmma->Get_It()+1, optmma->Get_nactive());
+                CHKERRQ(ierr);
 
   /*ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
   delete topOpt;
@@ -127,6 +128,7 @@ int main(int argc, char **args)
       do
       {
         ierr = PetscLogEventBegin(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
+        ierr = optmma->Set_Active(topOpt->active); CHKERRQ(ierr);
         ierr = optmma->Update( dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->UpdateEvent, 0, 0, 0, 0); CHKERRQ(ierr);
         ierr = topOpt->MatIntFnc( optmma->Get_x() ); CHKERRQ(ierr);
@@ -144,12 +146,13 @@ int main(int argc, char **args)
         ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
         ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
 
-        topOpt->StepOut(f, g, optmma->Get_It()+1);
+        ierr = topOpt->StepOut(f, g, optmma->Get_It()+1, optmma->Get_nactive());
+                  CHKERRQ(ierr);
 
       } while ( !optmma->Check() );
 
       /// Print result after this penalization
-      topOpt->ResultOut(optmma->Get_It());
+      ierr = topOpt->ResultOut(optmma->Get_It()); CHKERRQ(ierr);
     }
 
     /// Print out all function values if desired

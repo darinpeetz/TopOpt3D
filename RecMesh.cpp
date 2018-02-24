@@ -1933,6 +1933,7 @@ PetscErrorCode TopOpt::Initialize_Vectors()
 
     /// Create design variable and density vectors to work with the filter
     ierr = VecCreateMPI(comm, nLocElem, nElem, &x); CHKERRQ(ierr);
+    // V is usually the same as rho, but this allows for interpolation of rho to V
     ierr = VecDuplicate(x, &rho); CHKERRQ(ierr);
 
     return ierr;

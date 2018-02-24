@@ -50,19 +50,24 @@ class MMA
     // Set DV values (for initialization)
     void Set_Values( Eigen::VectorXd xIni ) { xval = xIni; xold1 = xIni; xold2 = xIni; }
     // Set DV values to active or passive
-    void Set_Active( std::vector<bool> &active ) { this->active = active;
-                 nactive = std::count(active.begin(), active.end(), true); }
+    int Set_Active( std::vector<bool> &active ) { this->active = active;
+               nactive = std::count(active.begin(), active.end(), true); return 0;}
+    int Set_Active( Eigen::Array<bool, -1, 1> &active ) {
+      std::copy(active.data(), active.data()+active.size(), this->active.begin());
+      nactive = std::count(this->active.begin(), this->active.end(), true);
+      return 0;}
     // Set current iteration number
     void Set_It(uint it) {iter = it; return;}
     // Set a flag to check if asymptotes are valid or need to be set to defaults
     void Restart() {fresh_start = true; return;}
 
     // Get various items from optimizer object
-    long            &Get_nloc() {return nloc;}
-    ulong           &Get_n()    {return n;}
-    int             &Get_m()    {return m;}
-    Eigen::VectorXd &Get_x()    {return xval;}
-    uint            &Get_It()   {return iter;}
+    long            &Get_nloc()    {return nloc;}
+    long            &Get_nactive() {return nactive;}
+    ulong           &Get_n()       {return n;}
+    int             &Get_m()       {return m;}
+    Eigen::VectorXd &Get_x()       {return xval;}
+    uint            &Get_It()      {return iter;}
 
     // Checking convergence
     bool Check(){ return (Check_Conv() || Check_It()); }
