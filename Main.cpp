@@ -76,6 +76,7 @@ int main(int argc, char **args)
     optmma->Set_Lower_Bound( Eigen::VectorXd::Constant(topOpt->nLocElem, 0) );
     optmma->Set_Upper_Bound( Eigen::VectorXd::Ones(topOpt->nLocElem) );
     optmma->Set_Values( xIni );
+    topOpt->active = Eigen::Array<bool, -1, 1>::Ones(topOpt->nLocElem);
     optmma->Set_n( topOpt->nLocElem );
 
     /// Initialze functions and FEM structures

@@ -191,6 +191,37 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         file >> line;
         pmax = strtod(line.c_str(), NULL);
       }
+      else if (!line.compare(0,5,"MATER") || !line.compare(0,6,"INTERP"))
+      {
+        file >> line;
+        if (!line.compare(0,4,"SIMP")) {
+          string params;
+          getline(file, params);
+          offset = 0;
+          while (true)
+          {
+            Find_Next_Digit(params.c_str(), offset, params.length());
+            if (offset == params.length())
+              break;
+            interp_param.push_back(strtod(params.c_str()+offset, &next));
+            offset = next - params.c_str();
+          }
+          if (!line.compare(5,3,"CUT")) {
+            if (interp_param.size() != 1) {
+              SETERRQ(comm, PETSC_ERR_ARG_WRONG, "SIMP_CUT needs 1 parameter");}
+            interpolation = SIMP_CUT; }
+          else if (!line.compare(5,8,"LOGISTIC")) {
+            if (interp_param.size() != 2) {
+            SETERRQ(comm, PETSC_ERR_ARG_WRONG, "SIMP_LOGISTIC needs 2 parameters");}
+            interpolation = SIMP_LOGISTIC; }
+          else if (!line.compare(5,6,"SMOOTH")) {
+            if (interp_param.size() != 2) {
+              SETERRQ(comm, PETSC_ERR_ARG_WRONG, "SIMP_SMOOTH needs 2 parameters");}
+            interpolation = SIMP_SMOOTH; }
+          else {
+            interpolation = SIMP; }
+        }
+      }
       else if (!line.compare(0,7,"RFACTOR"))
       {
         file >> line;

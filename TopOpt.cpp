@@ -17,6 +17,7 @@ PetscErrorCode TopOpt::Initialize()
   folder = "";
   print_every = INT_MAX;
   last_print = 1;
+  interpolation = SIMP;
 
   ierr = PrepLog(); CHKERRQ(ierr);
   MPI_Set();

@@ -20,6 +20,7 @@ typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 #define MPI_PETSCINT MPIU_INT
 
 enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, OTHER };
+enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC, SIMP_SMOOTH };
 
 /// Class used to keep track of filter information before assembly
 /// Implementation is available in Filter.cpp
@@ -189,6 +190,9 @@ public:
   double penal, pmin, pmax, pstep;
   //Filter Matrix
   Mat P;
+  //Material Interpolation type
+  MATINT interpolation;
+  std::vector<PetscScalar> interp_param;
   //Material Interpolation Values
   Vec V, dVdy, E, dEdy, Es, dEsdy;
   //Raw densities and filtered densities, rho = P*x

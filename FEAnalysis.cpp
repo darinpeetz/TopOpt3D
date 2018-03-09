@@ -432,124 +432,7 @@ Eigen::MatrixXd TopOpt::LocalK ( PetscInt el )
 
   return Ke;
 }
-/*****************************************************/
-/**             Material Interpolation              **/
-/*****************************************************/
-int TopOpt::MatIntFnc( const Eigen::VectorXd &y )
-{
-  PetscErrorCode ierr = 0;
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
-  }
 
-  double eps = 1e-10; // Minimum stiffness
-  double *p_x, *p_rho, *p_V, *p_E, *p_Es, *p_dVdy, *p_dEdy, *p_dEsdy; // Pointers
-
-  // Apply the filter to design variables
-  ierr = VecGetArray(x, &p_x); CHKERRQ(ierr);
-  copy(y.data(), y.data()+y.size(), p_x);
-  ierr = VecRestoreArray(x, &p_x); CHKERRQ(ierr);
-  ierr = MatMult(P, x, this->rho); CHKERRQ(ierr);
-  ierr = VecGetArray(this->rho, &p_rho); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > rho(p_rho, nLocElem);
-
-  // Give the filtered values to PETSc interpolation vectors
-  ierr = VecGetArray(this->V, &p_V); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > V(p_V, nLocElem);
-
-  ierr = VecGetArray(this->E, &p_E); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > E(p_E, nLocElem);
-
-  ierr = VecGetArray(this->Es, &p_Es); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > Es(p_Es, nLocElem);
-
-  ierr = VecGetArray(this->dVdy, &p_dVdy); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > dVdy(p_dVdy, nLocElem);
-
-  ierr = VecGetArray(this->dEdy, &p_dEdy); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > dEdy(p_dEdy, nLocElem);
-
-  ierr = VecGetArray(this->dEsdy, &p_dEsdy); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > dEsdy(p_dEsdy, nLocElem);
-
-  // Volume Interpolations
-  V = rho;
-  dVdy.setOnes();
-
-  // Stiffness Interpolations
-  dEsdy = ArrayXPS::Ones(nLocElem);
-  double dummyPenal = this->penal;
-  while (1.0 <= --dummyPenal)
-      dEsdy = dEsdy.cwiseProduct(rho);
-  Es = dEsdy.cwiseProduct(rho);
-  // At this point dEsdy = z^round(penal-1), Es = z^round(penal)
-
-  // Square Roots
-  short frac = dummyPenal*32768;
-  short maxshrt = 16384;
-  short nsqrt = 6; // Maximum number of square roots to take to approximate penal
-  for (short i = 0; i < nsqrt; i++)
-  {
-      rho = rho.cwiseSqrt();
-      if (frac & maxshrt)
-      {
-          Es = Es.cwiseProduct(rho);
-          dEsdy = dEsdy.cwiseProduct(rho);
-      }
-      frac<<=1;
-      if (!frac)
-          break;
-  }
-  // At this point Es = z^penal, dEsdy = z^(penal-1)
-  // Let go of filtered density
-  ierr = VecRestoreArray(this->rho, &p_rho); CHKERRQ(ierr);
-
-  // Finalizing Values and returning PETSc vectors
-  dEsdy *= this->penal;
-  //dEdy  = (1-eps)*dEsdy;
-  dEdy = dEsdy;
-
-  //E = (1-eps)*Es + eps;
-  E = Es;
-  active = E > eps;
-  V = V*active.cast<PetscScalar>();
-  E = E*active.cast<PetscScalar>();
-  Es = Es*active.cast<PetscScalar>();
-  dVdy = dVdy*active.cast<PetscScalar>();
-  dEdy = dEdy*active.cast<PetscScalar>();
-  dEsdy = dEsdy*active.cast<PetscScalar>();
-  
-  // Return V
-  ierr = VecRestoreArray(this->V, &p_V); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  // Return dVdy
-  ierr = VecRestoreArray(this->dVdy, &p_dVdy); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->dVdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->dVdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  // Return dEdy
-  ierr = VecRestoreArray(this->dEdy, &p_dEdy); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->dEdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  // Return dEsdy
-  ierr = VecRestoreArray(this->dEsdy, &p_dEsdy); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->dEdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->dEsdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  // Return Es
-  ierr = VecRestoreArray(this->Es, &p_Es); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->dEsdy, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  // Return E
-  ierr = VecRestoreArray(this->E, &p_E); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  return 0;
-}
 /*****************************************************/
 /**        Rectangular Element Guass Points         **/
 /*****************************************************/
@@ -581,6 +464,7 @@ Eigen::ArrayXXd TopOpt::GaussPoints( )
   GP *= 1/sqrt(3);
   return GP;
 }
+
 /*****************************************************/
 /**       Rectangular Element Shape Functions       **/
 /*****************************************************/
@@ -640,6 +524,7 @@ Eigen::MatrixXd TopOpt::dN(double *gaussPoint)
   }
   return dNdxi;
 }
+
 /*****************************************************/
 /**    Construct B matrix for given Gauss Point     **/
 /*****************************************************/
@@ -696,6 +581,7 @@ void TopOpt::AssignB(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &B)
   }
   return;
 }
+
 /*****************************************************/
 /**    Construct G matrix for given Gauss Point     **/
 /*****************************************************/
