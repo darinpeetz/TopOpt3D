@@ -16,11 +16,12 @@ PetscErrorCode TopOpt::Initialize()
   verbose = 1;
   folder = "";
   print_every = INT_MAX;
-  last_print = 1;
+  last_print = 0;
   interpolation = SIMP;
 
   ierr = PrepLog(); CHKERRQ(ierr);
   MPI_Set();
+  ierr = PetscFOpen(comm, "Output.txt", "w", &output); CHKERRQ(ierr);
 
   return ierr;
 }
@@ -64,6 +65,7 @@ PetscErrorCode TopOpt::Clear()
   ierr = VecDestroy(&rho); CHKERRQ(ierr);
   for (unsigned int i = 0; i < function_list.size(); i++)
     delete function_list[i];
+  ierr = PetscFClose(comm, output); CHKERRQ(ierr);
   return ierr;
 }
 

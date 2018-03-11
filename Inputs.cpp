@@ -137,6 +137,8 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       // Check which option is being set
       if (!line.compare(0,9,"[/PARAMS]"))
         return ierr;
+      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
+        getline(file,line);
       else if (!line.compare(0,10,"DIMENSIONS"))
       {
         getline(file, line);
@@ -300,7 +302,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         file.ignore();
         getline(file, this->folder);
       }
-      else if (!line.compare(0,5,"PRINT_EVERY"))
+      else if (!line.compare(0,5,"PRINT"))
       {
         file >> line;
         print_every = strtol(line.c_str(), NULL, 0);
@@ -353,6 +355,12 @@ PetscErrorCode TopOpt::Set_Funcs()
       FUNCTION_TYPE func;
       if (!line.compare("[/Functions]"))
         return ierr;
+      if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
+      {
+        getline(file,line);
+        file >> line;
+        continue;
+      }
       else if (!line.compare(0,10,"Compliance"))
         func = COMPLIANCE;
       else if (!line.compare(0,9,"Perimeter"))
@@ -486,6 +494,12 @@ PetscErrorCode TopOpt::Def_BC()
       TYPE = OTHER;
       if (!line.compare("[/BC]"))
         return ierr;
+      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
+      {
+        getline(file,line);
+        file >> line;
+        continue;
+      }
       else if (!line.compare(0,7,"Support"))
         TYPE = SUPPORT;
       else if (!line.compare(0,4,"Load"))

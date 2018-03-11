@@ -32,9 +32,6 @@ int main(int argc, char **args)
     MMA * optmma = new MMA;
     optmma->Set_Comm(Opt_Comm);
 
-    // Open file for outputs
-    ierr = PetscFOpen(topOpt->comm, "Output.txt", "w", &topOpt->output); CHKERRQ(ierr);
-
     /// Input Parameters
     topOpt->filename = "Standard_Input";
     char input[256]; PetscBool hasInput;
@@ -164,7 +161,6 @@ int main(int argc, char **args)
     }
 
     /// Wrap up and finish
-    ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
     delete topOpt;
     delete optmma;
 
