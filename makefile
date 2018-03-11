@@ -24,14 +24,14 @@ OBJS = $(CPPS:.cpp=.o)
 # Extensionless filenames
 SOURCE = $(foreach file, $(CPPS),$(notdir $(basename $(file))))
 
-all: TopOpt
+all: TopOpt_${BUILD_DIR}
 
 tidy:
 	rm -f ${BUILD_DIR}/*.o
 
-#File_List = Main TopOpt Inputs RecMesh Filter Interpolation MMA FEAnalysis Functions Volume Compliance Perimeter Buckling Dynamic EigenPeetz PRINVIT JDMG LOPGMRES
+#SOURCE = Main TopOpt Inputs RecMesh Filter Interpolation MMA FEAnalysis Functions Volume Compliance Perimeter Buckling Dynamic EigenPeetz PRINVIT JDMG LOPGMRES
 
-TopOpt: $(patsubst %,${BUILD_DIR}/%.o, ${SOURCE})
+TopOpt_${BUILD_DIR}: $(patsubst %,${BUILD_DIR}/%.o, ${SOURCE})
 	${LINK} $(patsubst %,${BUILD_DIR}/%.o, ${SOURCE}) -o TopOpt_${BUILD_DIR} ${SLEPC_EPS_LIB} -lparmetis -lmetis
 
 # Build any needed object files
