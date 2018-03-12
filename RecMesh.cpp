@@ -10,7 +10,7 @@
 
 extern "C"
 {
-  #include "parmetis.h"
+  #include <parmetis.h>
 }
 
 using namespace std;

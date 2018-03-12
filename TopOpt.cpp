@@ -1,4 +1,4 @@
-#include "mpi.h" // Has to precede Petsc includes to use MPI::BOOL
+#include <mpi.h> // Has to precede Petsc includes to use MPI::BOOL
 #include "TopOpt.h"
 #include <fstream>
 #include <climits>

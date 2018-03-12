@@ -1,4 +1,3 @@
-#include "mpi.h"
 #include <iostream>
 #include <fstream>
 #include <Eigen/Eigen>

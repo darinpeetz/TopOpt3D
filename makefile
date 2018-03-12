@@ -10,6 +10,14 @@ endif
 
 include ${SLEPC_DIR}/lib/slepc/conf/slepc_common
 
+# This avoids grabbing include files from other libraries (Eigen, Petsc, etc.)
+# For use with intel compiler
+#DEPEND = mpicxx -isystem${MYLIB_DIR}/Eigen -isystem${SLEPC_DIR}/include \
+          -isystem${SLEPC_DIR}/${PETSC_ARCH}/include -isystem${PETSC_DIR}/include \
+          -isystem${PETSC_DIR}/${PETSC_ARCH}/include
+# For use with gcc
+DEPEND = g++
+
 COMPILE = mpicxx -fPIC -Wall -Wwrite-strings -Wno-strict-aliasing -Wno-unknown-pragmas ${OPT_FLAG} \
           -I${MYLIB_DIR}/Eigen -I${SLEPC_DIR}/include \
           -I${SLEPC_DIR}/${PETSC_ARCH}/include -I${PETSC_DIR}/include \
@@ -22,7 +30,7 @@ CPPS = $(wildcard *.cpp)
 # All the compiled source files
 OBJS = $(CPPS:.cpp=.o)
 # Extensionless filenames
-SOURCE = $(foreach file, $(CPPS),$(notdir $(basename $(file))))
+SOURCE = $(foreach file, $(CPPS), $(filter-out Ignore_%, $(notdir $(basename $(file)))))
 
 all: TopOpt_${BUILD_DIR}
 
@@ -40,8 +48,8 @@ ${BUILD_DIR}/%.o: %.cpp
 
 # Make a list of dependencies
 depends:
-	@ rm -f depends.mk
-	@ for f in $(SOURCE); do echo $$f; g++ -MM -MG $$f.cpp -MT $$f.o >> depends.mk; done
+	@ rm -f ${BUILD_DIR}/depends.mk
+	@ for f in $(SOURCE); do echo $$f; echo "${BUILD_DIR}/""$$(${DEPEND} -MM -MG $$f.cpp -MT $$f.o)" >> ${BUILD_DIR}/depends.mk; done
 
 # Include dependencies list
-include depends.mk
+include ${BUILD_DIR}/depends.mk

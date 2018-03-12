@@ -6,10 +6,7 @@
 #include <Eigen/Eigen>
 #include "MMA.h"
 #include "Functions.h"
-/*extern "C"
-{
-  #include "parmetis.h"
-}*/
+
 typedef int idx_t;
 
 typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
