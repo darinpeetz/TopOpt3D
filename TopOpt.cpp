@@ -346,7 +346,7 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
 
   ierr = MPI_Wait(&request, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   // Print out total objective and constraint values
-  ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", f); CHKERRQ(ierr);
+  ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", it); CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Active design variables: %i\n", nactive);
           CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Objective: %1.6g\n", f); CHKERRQ(ierr);
