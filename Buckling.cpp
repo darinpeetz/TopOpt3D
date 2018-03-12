@@ -8,7 +8,7 @@
 
 using namespace std;
 
-PetscErrorCode Stability::Function( TopOpt *topOpt)
+PetscErrorCode Stability::Function( TopOpt *topOpt )
 {
   PetscErrorCode ierr = 0;
   short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
@@ -34,18 +34,6 @@ PetscErrorCode Stability::Function( TopOpt *topOpt)
     ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
   }
 
-Mat Ks2;
-ierr = MatDuplicate(Ks, MAT_SHARE_NONZERO_PATTERN, &Ks2); CHKERRQ(ierr);
-ierr = MatCopy(Ks, Ks2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
-ierr = MatScale(Ks2, -1); CHKERRQ(ierr);
-
-PetscReal tol = pow(10,log10(2*topOpt->nNode)/2-8);
-PetscInt MaxIt = (nvals+1)*50*(PetscInt)log(topOpt->nElem);
-VectorXPS l_JDMG, l_LOBPCG, l_LOPGMRES;
-
-FILE *timings;
-ierr = PetscFOpen(topOpt->comm, "Timings", "a", &timings); CHKERRQ(ierr);
-double t0 = MPI_Wtime();
   LOPGMRES lopgmres(topOpt->comm);
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
@@ -68,184 +56,27 @@ double t0 = MPI_Wtime();
   // Set target eigenvalues
   Nev_Type target_type = UNIQUE_LAST_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
-  lopgmres.Set_MaxIt(3*MaxIt);
+  lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)log(topOpt->nElem));
   lopgmres.Set_Cycle(FMGCycle);
-  lopgmres.Set_Tol(tol);
+  lopgmres.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
   // Compute the eigenvalues
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
   PetscInt nev_conv = lopgmres.Get_nev_conv();
-  PetscInt its = lopgmres.Get_Iterations();
-  l_LOPGMRES.resize(nev_conv);
-  lopgmres.Get_Eigenvalues(l_LOPGMRES.data());
+  ArrayXPS lambda(nev_conv);
+  lopgmres.Get_Eigenvalues(lambda.data());
 
-ierr = PetscFPrintf(topOpt->comm, timings, "LOPGMRES took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
-t0 = MPI_Wtime();
+  // Get the eigenvectors and check for locality
+  Vec *phi, phi_copy;
+  lopgmres.Get_Eigenvectors(&phi);
+  PetscReal norm1, norminf;
+  ierr = VecNorm(phi[0], NORM_1, &norm1); CHKERRQ(ierr);
+  ierr = VecNorm(phi[0], NORM_INFINITY, &norminf); CHKERRQ(ierr);
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Norm ratio: %1.8g\n\n", norm1/norminf); CHKERRQ(ierr);
 
-EPS eps;
-{
-  ST st; KSP ksp; PC pc, JUNK;
-  ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
-  ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
-  ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
-  ierr = EPSSetTolerances(eps, tol, 2*MaxIt); CHKERRQ(ierr);
-  // Setting up krylov ST structure
-  ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
-  ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);
-  ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-  ierr = PCSetType(pc, PCMG); CHKERRQ(ierr);
-  ierr = KSPSetOperators(ksp, topOpt->K, topOpt->K); CHKERRQ(ierr);
-  PetscInt nlevels = topOpt->PR.size()+1;
-  ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
-  ierr = PCMGSetType(pc, PC_MG_FULL); CHKERRQ(ierr);
-  ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
-  for (int i = 1; i < nlevels; i++) {
-  ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
-  // Use direct solve on coarse level
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
-  ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
-  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-  ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
-  ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
-  ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
-  ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
-  ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
-  ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
-  ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
-  ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  // Use Jacobi smoothing
-  for (int i = 1; i < nlevels; i++)
-  {
-    ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-    ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-    ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-    ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
-  }
-
-  ierr = EPSSetDimensions(eps, max(nev_conv,1), PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSSetType(eps, EPSLOBPCG); CHKERRQ(ierr);
-  ierr = EPSSetOperators(eps, Ks2, topOpt->K); CHKERRQ(ierr);
-  ierr = EPSSetOptionsPrefix(eps, "LOBPCG_"); CHKERRQ(ierr);
-  ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
-  ierr = EPSSolve(eps); CHKERRQ(ierr);
-  ierr = EPSGetConverged(eps, &nev_conv); CHKERRQ(ierr);
-
-  l_LOBPCG.resize(nev_conv);
-  for (int i = 0; i < nev_conv; i++){
-  ierr = EPSGetEigenvalue(eps, i, l_LOBPCG.data()+i, NULL); CHKERRQ(ierr); }
-
-  ierr = EPSGetIterationNumber(eps, &its); CHKERRQ(ierr);
-  ierr = PCCreate(topOpt->comm, &JUNK); CHKERRQ(ierr);
-  ierr = KSPSetPC(ksp, JUNK); CHKERRQ(ierr);
-  ierr = PCDestroy(&JUNK); CHKERRQ(ierr);
-  ierr = MatAssemblyBegin(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = MatAssemblyEnd(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  //ierr = EPSDestroy(&eps); CHKERRQ(ierr);
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "LOBPCG took %1.6g seconds and %i iterations to find %i eigenvalues\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
-t0 = MPI_Wtime();
-
-  /// Create JDMG instance
-  JDMG jdmg(topOpt->comm);
-  jdmg.Set_Verbose(topOpt->verbose);
-  jdmg.Set_File(topOpt->output);
-  // Get restrictors from FEM problem
-  ierr = PCGetType(pcmg, &pctype); CHKERRQ(ierr);
-  /*if (!strcmp(pctype,PCMG))
-  {*/
-    ierr = jdmg.Set_Hierarchy(topOpt->PR); CHKERRQ(ierr);
-  /*}
-  else if (!strcmp(pctype,PCGAMG))
-  {
-    ierr = jdmg.PCMG_Extract(pcmg); CHKERRQ(ierr);
-  }
-  else
-     SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);*/
-  // Set Operators
-  jdmg.Set_Operators(Ks, topOpt->K);
-  // Set target eigenvalues
-  jdmg.Set_Target(LR, nvals, target_type);
-  jdmg.Set_MaxIt(MaxIt);
-  jdmg.Set_Cycle(FMGCycle);
-  jdmg.Set_Tol(tol);
-  // Compute the eigenvalues
-  ierr = jdmg.Compute(); CHKERRQ(ierr);
-
-  // Get the results
-  its = jdmg.Get_Iterations();
-  nev_conv = jdmg.Get_nev_conv();
-  VectorXPS lambda(nev_conv);
-  l_JDMG.resize(nev_conv);
-  jdmg.Get_Eigenvalues(l_JDMG.data());
-  lambda = l_JDMG;
-
-ierr = PetscFPrintf(topOpt->comm, timings, "JDMG took %1.6g seconds and %i iterations to find %i eigenvalues\n\n", MPI_Wtime()-t0, its, nev_conv); CHKERRQ(ierr);
-
-l_LOBPCG *= -1;
-if ( (l_LOBPCG.size() != l_LOPGMRES.size()) || (l_LOBPCG.size() != l_JDMG.size()) || (l_LOBPCG-l_LOPGMRES).norm()/l_LOPGMRES.norm() > 1e-3 || (l_LOBPCG-l_JDMG).norm()/l_JDMG.norm() > 1e-3 )
-{
-  ierr = PetscFPrintf(topOpt->comm, timings, "LOPGMRES:\tLOBPCG:\tJDMG:\n"); CHKERRQ(ierr);
-
-  Vec *p_LOPGMRES, p_LOBPCG, *p_JDMG;
-  VecDuplicate(topOpt->U, &p_LOBPCG);
-  lopgmres.Get_Eigenvectors(&p_LOPGMRES);
-  jdmg.Get_Eigenvectors(&p_JDMG);
-  PetscViewer view;
-  char filename[20];
-
-  for (int ii = 0; ii < max(max(l_LOPGMRES.size(), l_LOBPCG.size()), l_JDMG.size()); ii++)
-  {
-  if (ii < l_LOPGMRES.size()){
-    PetscFPrintf(topOpt->comm, timings, "%17.16g\t", l_LOPGMRES(ii));
-    sprintf(filename, "phi_LOPGMRES_%i", ii);
-    PetscViewerBinaryOpen(topOpt->comm, filename, FILE_MODE_WRITE, &view);
-    VecView(p_LOPGMRES[ii], view);
-    PetscViewerDestroy(&view);
-  }
-  else
-    PetscFPrintf(topOpt->comm, timings, "0\t");
-  if (ii < l_LOBPCG.size()){
-    PetscFPrintf(topOpt->comm, timings, "%17.16g\t", l_LOBPCG(ii));
-    sprintf(filename, "phi_LOBPCG_%i", ii);
-    EPSGetEigenvector(eps, ii, p_LOBPCG, NULL);
-    PetscViewerBinaryOpen(topOpt->comm, filename, FILE_MODE_WRITE, &view);
-    VecView(p_LOBPCG, view);
-    PetscViewerDestroy(&view);
-  }
-  else
-    PetscFPrintf(topOpt->comm, timings, "0\t");
-  if (ii < l_JDMG.size()){
-    PetscFPrintf(topOpt->comm, timings, "%17.16g\n", l_JDMG(ii));
-    sprintf(filename, "phi_JDMG_%i", ii);
-    PetscViewerBinaryOpen(topOpt->comm, filename, FILE_MODE_WRITE, &view);
-    VecView(p_JDMG[ii], view);
-    PetscViewerDestroy(&view);
-  }
-  else
-    PetscFPrintf(topOpt->comm, timings, "0\n");
-  }
-  PetscFPrintf(topOpt->comm, timings, "\n");
-  //ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
-
-  PetscViewerBinaryOpen(topOpt->comm, "A.bin", FILE_MODE_WRITE, &view);
-  MatView(Ks, view);
-  PetscViewerDestroy(&view);
-  PetscViewerBinaryOpen(topOpt->comm, "B.bin", FILE_MODE_WRITE, &view);
-  MatView(topOpt->K, view);
-  VecDestroy(&p_LOBPCG);
-  PetscViewerDestroy(&view);
-  MPI_Barrier(topOpt->comm);
-  //SETERRQ(topOpt->comm, PETSC_ERR_PLIB, "Different eigenvalues generated by some methods");
-}
-ierr = EPSDestroy(&eps); CHKERRQ(ierr);
-ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
-
+  // Number of converged eigenvalues to use for optimization
   nev_conv -= (target_type == TOTAL_NEV || nev_conv <= nvals) ? 0 : 1;
 
+  // Merge any duplicate eigenvalues
   for (short j = 0; j < nvals-1; j++)
     values(j) = lambda[j];
   for (short j = nvals-1; j < nev_conv; j++)
@@ -255,9 +86,6 @@ ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
   // Return if sensitivities aren't needed
   if (calc_gradient == PETSC_FALSE)
     return 0;
-
-  Vec *phi, phi_copy;
-  jdmg.Get_Eigenvectors(&phi);
 
   // Make sure we have enough room for all eigenvectors
   topOpt->bucklingShape.resize(topOpt->bucklingShape.rows(), nev_conv);
