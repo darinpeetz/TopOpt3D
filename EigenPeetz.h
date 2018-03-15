@@ -53,7 +53,7 @@ public:
   void Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype);
   void Set_Tol(double tol) {eps = tol;}
   void Set_MaxIt(PetscInt maxit) {this->maxit = maxit;}
-  PetscInt Get_Iterations() {return it;}
+  PetscInt Get_It() {return it;}
   // Solver
   virtual PetscErrorCode Compute() = 0;
   // Get results

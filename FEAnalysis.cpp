@@ -196,7 +196,9 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   ierr = KSPCreate(comm, &KUF); CHKERRQ(ierr);
   ierr = KSPSetType(KUF, KSPGMRES); CHKERRQ(ierr);
   ierr = KSPSetInitialGuessNonzero(this->KUF, PETSC_FALSE); CHKERRQ(ierr);
-  //ierr = KSPSetTolerances(KUF, 1e-8, PETSC_DEFAULT, PETSC_DEFAULT, 1e3); CHKERRQ(ierr);
+  ierr = KSPSetTolerances(KUF, 1e-8, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
+  // Use unpreconditioned norm for convergence test
+  ierr = KSPSetNormType(this->KUF, KSP_NORM_UNPRECONDITIONED); CHKERRQ(ierr);
   ierr = KSPSetOptionsPrefix(KUF, "kuf_"); CHKERRQ(ierr);
   ierr = KSPSetFromOptions(KUF); CHKERRQ(ierr);
   // Set Preconditioner

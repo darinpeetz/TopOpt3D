@@ -336,18 +336,20 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
             comm, &request); CHKERRQ(ierr);
 
   // Print out values at every step if desired
-  if ((print_every - last_print++) == 0)
+  if ((print_every - ++last_print) == 0)
   {
     char name_suffix[30];
     sprintf(name_suffix, "_pen%1.4g_it%i", penal, it);
     ierr = PrintVals(name_suffix); CHKERRQ(ierr);
-    last_print = 1;
+    last_print = 0;
   }
+  // So we print at iteration 10, 20, 30, etc. instead of 9, 19, 29...
+  last_print *= (it > 0);
 
   ierr = MPI_Wait(&request, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   // Print out total objective and constraint values
   ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", it); CHKERRQ(ierr);
-  ierr = PetscFPrintf(comm, output, "Active design variables: %i\n", nactive);
+  ierr = PetscFPrintf(comm, output, "Active design variables: %i\n", totactive);
           CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Objective: %1.6g\n", f); CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Constraints:\n"); CHKERRQ(ierr);
@@ -419,6 +421,12 @@ PetscErrorCode TopOpt::PrintVals ( char *name_suffix )
   ierr = PetscViewerBinaryOpen(this->comm, filename,
       FILE_MODE_WRITE, &output); CHKERRQ(ierr);
   ierr = VecView(this->V, output); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
+
+  sprintf(filename, "Es%s.bin", name_suffix);
+  ierr = PetscViewerBinaryOpen(this->comm, filename,
+      FILE_MODE_WRITE, &output); CHKERRQ(ierr);
+  ierr = VecView(this->Es, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
   sprintf(filename, "E%s.bin", name_suffix);

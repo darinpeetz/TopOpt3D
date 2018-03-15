@@ -9,8 +9,6 @@
 #include <slepceps.h>
 #include "Functions.h"
 
-using namespace std;
-
 static char help[] = "The topology optimization routine we deserve, but not the one we need right now.\n\n";
 
 #define PETSC_ERR_PRINT_STEP 101
@@ -46,7 +44,7 @@ int main(int argc, char **args)
     PetscInt mg_levels = 2, min_size = -1;
     ierr = topOpt->Def_Param(optmma, Dimensions, Nel, R, Normalization,
                       Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
-    mg_levels = max(mg_levels, 2);
+    mg_levels = std::max(mg_levels, 2);
     ierr = topOpt->Set_Funcs(); CHKERRQ(ierr);
     ierr = topOpt->Get_CL_Options(); CHKERRQ(ierr);
 
@@ -76,7 +74,7 @@ int main(int argc, char **args)
     optmma->Set_n( topOpt->nLocElem );
 
     /// Initialze functions and FEM structures
-    cout.precision(12);
+    std::cout.precision(12);
     topOpt->FEInitialize();
     PetscInt ncon = 0;
     for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++)
@@ -113,7 +111,7 @@ int main(int argc, char **args)
       ierr = PetscLogEventBegin(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = Function_Base::Function_Call( topOpt, f, dfdx, g, dgdx ); CHKERRQ(ierr);
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
-      ierr = topOpt->StepOut(f, g, optmma->Get_It()+1, optmma->Get_nactive());
+      ierr = topOpt->StepOut(f, g, optmma->Get_It(), optmma->Get_nactive());
                 CHKERRQ(ierr);
 
   /*ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);

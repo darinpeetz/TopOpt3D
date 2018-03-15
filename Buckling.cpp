@@ -6,8 +6,6 @@
 #include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
 
-using namespace std;
-
 PetscErrorCode Stability::Function( TopOpt *topOpt )
 {
   PetscErrorCode ierr = 0;
@@ -16,7 +14,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   /// Assemble stress stiffness matrix and get sensitivity information
   if (dKsdy.size() == 0)
   {
-    dKsdy.resize( topOpt->nLocElem*(long)pow(DE,2) );
+    dKsdy.resize( topOpt->nLocElem*(long)std::pow(DE,2) );
     ierr = MatDuplicate( topOpt->K, MAT_SHARE_NONZERO_PATTERN, &Ks ); CHKERRQ(ierr);
   }
   ierr = StressFnc( topOpt ); CHKERRQ(ierr);
@@ -35,6 +33,8 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   }
 
   LOPGMRES lopgmres(topOpt->comm);
+  //lopgmres.Set_Verbose(4);
+  //lopgmres.Open_File("LOPGMRES_Output.txt");
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
   // Get restrictors from FEM problem
@@ -56,12 +56,19 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   // Set target eigenvalues
   Nev_Type target_type = UNIQUE_LAST_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
-  lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)log(topOpt->nElem));
+  lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
   lopgmres.Set_Cycle(FMGCycle);
-  lopgmres.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
+  lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
   // Compute the eigenvalues
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
   PetscInt nev_conv = lopgmres.Get_nev_conv();
+  if (nev_conv == 0)
+  {
+    char name_suffix[30];
+    sprintf(name_suffix, "_eigen_failure");
+    ierr = topOpt->PrintVals(name_suffix); CHKERRQ(ierr);
+    SETERRQ(topOpt->comm, PETSC_ERR_CONV_FAILED, "Eigensolver found 0 eigenvalues\n");
+  } 
   ArrayXPS lambda(nev_conv);
   lopgmres.Get_Eigenvalues(lambda.data());
 
@@ -69,6 +76,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   Vec *phi, phi_copy;
   lopgmres.Get_Eigenvectors(&phi);
   PetscReal norm1, norminf;
+
   ierr = VecNorm(phi[0], NORM_1, &norm1); CHKERRQ(ierr);
   ierr = VecNorm(phi[0], NORM_INFINITY, &norminf); CHKERRQ(ierr);
   ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Norm ratio: %1.8g\n\n", norm1/norminf); CHKERRQ(ierr);
@@ -157,8 +165,8 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     {
     if (topOpt->element(el,nd) < topOpt->nLocNode)
       dKsdU.block(DN*topOpt->element(el,nd), 0, DN, nev_conv) +=
-      dKs.block(0, DN*nd, DE*DE, DN).transpose() *
-      phim.block(el*DE*DE, 0, DE*DE, nev_conv);
+        dKs.block(0, DN*nd, DE*DE, DN).transpose() *
+        phim.block(el*DE*DE, 0, DE*DE, nev_conv);
     }
   }
   ierr = VecRestoreArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
@@ -178,6 +186,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   }
 
   /// Solve the adjoint problem
+  // Vectors to be used with the solver
   Vec dKsdU_vec;
   ierr = VecDuplicate(topOpt->U, &dKsdU_vec); CHKERRQ(ierr);
   Vec v_vec;
@@ -189,6 +198,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   for (unsigned int i = 0; i < topOpt->springDof.size(); i++)
     dKsdU.row(topOpt->springDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
 
+  // Solving each adjoint problem
   for (short i = 0; i < nev_conv; i++)
   {
     ierr = VecPlaceArray( dKsdU_vec, dKsdU.data() + i*dKsdU.rows() ); CHKERRQ(ierr);

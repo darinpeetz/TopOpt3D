@@ -290,7 +290,17 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       }
       else if (!line.compare(0,8,"SMOOTHER"))
       {
-        file >> this->smoother;
+        string smoother; file >> smoother;
+        for (string::size_type i = 0; i < smoother.length(); ++i)
+          smoother[i] = toupper(smoother[i]);
+        if (!smoother.compare(0,4,"RICH") || !smoother.compare(0,4,"WJAC") ||
+            !smoother.compare(0,3,"JAC"))
+          this->smoother = KSPRICHARDSON;
+        else if (!smoother.compare(0,5,"CHEBY"))
+          this->smoother = KSPCHEBYSHEV;
+        else {
+          SETERRQ1(comm, PETSC_ERR_SUP, "Unknown smoother type \"%s\" specified",
+                   smoother.c_str()); }
       }
       else if (!line.compare(0,7,"VERBOSE"))
       {
