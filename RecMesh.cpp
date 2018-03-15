@@ -661,11 +661,15 @@ PetscErrorCode TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
                     Nel[dim]+1, (first[dim]-1)*spacing, (last[dim]-1)*spacing);
     ArrayXXPI side2 = RowArrayXPI::LinSpaced(
                     Nel[dim]+1, first[dim]*spacing, last[dim]*spacing);
+    // Mesh is divided amongst processors by slices in highest dimension
+    // If at the highest dimension or proc 0, first element is out of domain
     if (dim < numDims-1 || myid == 0)
       side1(0) = nElem;
+    // Similarly, if at highest dim or last proc, last element is out of domain
     if (dim < numDims-1 || myid == nprocs-1)
       side2(Nel[dim]) = nElem;
 
+    // Shared edges go to higher process
     if (dim == numDims-1 && myid > 0)
     {
       Nel[dim]++;
@@ -675,6 +679,7 @@ PetscErrorCode TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
     int otherSpacing = 1;
     for (short otherDim = 0; otherDim < numDims; otherDim++)
     {
+      // If true, convert matrix to vector (ala (:) in Matlab)
       if (otherDim == dim)
       {
         side1.resize(side1.size(),1);
@@ -1965,7 +1970,7 @@ PetscErrorCode TopOpt::Localize()
       // Check if second element is local or not and act accordingly
       if (edgeElem(i,1) == nElem)
         edgeElem(i,1) = gElem.rows();
-      else if (edgeElem(i,1) > elmdist(myid))
+      else if (edgeElem(i,1) >= elmdist(myid))
         edgeElem(i,1) -= elmdist(myid);
       else
         edgeElem(i,1) = std::find(start, finish, edgeElem(i,1)) - gElem.data();
