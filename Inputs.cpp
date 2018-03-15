@@ -430,7 +430,13 @@ PetscErrorCode TopOpt::Set_Funcs()
           // To prevent errors from old input files
           getline(file, line);
           continue;
-        }  
+        }
+        // Normalize constraint values
+        if (objective == PETSC_FALSE)
+        {
+          for (unsigned int i = 0; i < values.size(); i++)
+            values[i] *= max-min;
+        }
         break;
       }
 

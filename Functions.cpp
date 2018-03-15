@@ -44,9 +44,10 @@ PetscErrorCode Function_Base::Compute(TopOpt *topOpt)
   for (PetscInt i = 0; i < weights.size(); i++)
   {
     value += (objective==PETSC_TRUE?weights(i):1)*(values(i)-min_val);
+    value -= (objective==PETSC_TRUE?0:weights(i));
     gradient += (objective==PETSC_TRUE?weights(i):1)*gradients.col(i);
   }
-  value /= max_val-min_val; value -= (objective==PETSC_TRUE?weights(i):0)
+  value /= max_val-min_val;
   gradient /= max_val-min_val;
 
   return ierr;
