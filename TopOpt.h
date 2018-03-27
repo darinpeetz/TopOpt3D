@@ -139,6 +139,8 @@ public:
   Vec F;
   //Vector of displacements from fem problem
   Vec U;
+  // Maximum stiffness of elements attached to dof
+  Vec MaxStiff;
   //Global indices of free local dofs
   ArrayXPI freeDof;
   //Global indices of fixed local dofs

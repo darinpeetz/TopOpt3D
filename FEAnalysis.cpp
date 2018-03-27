@@ -169,6 +169,9 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   }
   ierr = VecAssemblyBegin(spKVec); CHKERRQ(ierr);
 
+  // Construct secondary (diagonal) K corresponding for fixing void dof
+  ierr = VecDuplicate(this->spKVec, &this->MaxStiff); CHKERRQ(ierr);
+
   // Construct M vector for lumped masses
   ierr = VecCreateMPI(comm, numDims*nLocNode,
                numDims*nNode, &MLump); CHKERRQ(ierr);
@@ -246,42 +249,51 @@ int TopOpt::FEAssemble( )
   PetscInt el = -1;
   Eigen::MatrixXd ke = p_E[0]*this->ke[0];
   std::vector<PetscInt> cols(element.cols());
-  for (long nd = 0; nd < element.size(); nd++)
+  /*PetscScalar *p_MaxStiff;
+  ierr = VecSet(this->MaxStiff, 0.0); CHKERRQ(ierr);
+  ierr = VecGetArray(this->MaxStiff, &p_MaxStiff); CHKERRQ(ierr);*/
+  for (long el = 0; el < element.rows(); el++)
   {
-    node = *(element.data() + nd);
-    if (node < this->nLocNode)
+    if (!regular)
+      ke = p_E[el]*this->ke[el];
+    else
+      ke = p_E[el]*this->ke[0];
+    for (short nd = 0; nd < element.cols(); nd++)
+      cols[nd] = this->gNode(this->element(el, nd));
+    for (short nd = 0; nd < element.cols(); nd++)
     {
-      if (el != nd/this->element.cols())
+      node = element(el,nd);
+      if (node < this->nLocNode)
       {
-        el = nd/this->element.cols();
-        for (int j = 0; j < this->element.cols(); j++)
-          cols[j] = this->gNode(this->element(el,j));
-        if (!regular)
-          ke = p_E[el]*this->ke[el];
-        else
-          ke = p_E[el]*this->ke[0];
+        ierr = MatSetValuesBlocked(this->K, 1, this->gNode.data()+node,
+          this->element.cols(), cols.data(), ke.data() +
+          ke.rows()*this->numDims*(nd % this->element.cols()), ADD_VALUES);
+        CHKERRQ(ierr);
+        /*for (short dof = 0; dof < this->numDims; dof++)
+          p_MaxStiff[this->numDims*node + dof] =
+            std::max(p_MaxStiff[this->numDims*node + dof], p_E[el]);*/
       }
-
-      ierr = MatSetValuesBlocked(this->K, 1, this->gNode.data()+node,
-        this->element.cols(), cols.data(), ke.data() +
-        ke.rows()*this->numDims*(nd % this->element.cols()), ADD_VALUES);
-      CHKERRQ(ierr);
     }
   }
-
+  /*PetscScalar eps = 1e-12;
+  for (int d = 0; d < this->nLocNode*this->numDims; d++)
+    p_MaxStiff[d] = eps/(p_MaxStiff[d]+eps);
+  ierr = VecRestoreArray(this->MaxStiff, &p_MaxStiff); CHKERRQ(ierr);*/
+      
   ierr = MatAssemblyBegin(this->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead(this->E, &p_E); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(this->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
   // Fix unattached dof
-  Vec D; PetscScalar *p_D;
+  /*Vec D; PetscScalar *p_D;
   ierr = VecDuplicate(this->F, &D); CHKERRQ(ierr);
   ierr = MatGetDiagonal(this->K, D); CHKERRQ(ierr);
   ierr = VecGetArray(D, &p_D); CHKERRQ(ierr);
   Eigen::Map< ArrayXPS > Diag(p_D, numDims*nLocNode);
   Diag = (Diag == 0.0).cast<PetscScalar>();
   ierr = VecRestoreArray(D, &p_D); CHKERRQ(ierr);
-  ierr = MatDiagonalSet(this->K, D, ADD_VALUES); CHKERRQ(ierr);
+  ierr = MatDiagonalSet(this->K, D, ADD_VALUES); CHKERRQ(ierr);*/
+//  ierr = MatDiagonalSet(this->K, this->MaxStiff, ADD_VALUES); CHKERRQ(ierr);
   // Apply Spring B.C.'s
   ierr = MatDiagonalSet(this->K, this->spKVec, ADD_VALUES); CHKERRQ(ierr);
   // Apply Dirichlet B.C.'s
