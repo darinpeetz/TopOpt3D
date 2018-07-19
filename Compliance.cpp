@@ -19,30 +19,22 @@ PetscErrorCode Compliance::Function( TopOpt *topOpt )
   ierr = VecPlaceArray( dCdy, gradients.data() ); CHKERRQ(ierr);
 
   const PetscScalar *p_U, *p_dEdy;
-  VecGetArrayRead( topOpt->U, &p_U ); CHKERRQ(ierr);
-  VecGetArrayRead( topOpt->dEdy, &p_dEdy ); CHKERRQ(ierr);
+  ierr = VecGetArrayRead( topOpt->U, &p_U ); CHKERRQ(ierr);
+  ierr = VecGetArrayRead( topOpt->dEdy, &p_dEdy ); CHKERRQ(ierr);
   // dCdrhof
   short DN = topOpt->numDims;
   short NE = pow(2, topOpt->numDims);
-  ArrayXPI eDof( DN*NE );
+  VectorXPS U_loc( DN*NE );
   for (long el = 0; el < topOpt->nLocElem; el++)
   {
-    gradients(el,0) = 0;
     for (int j = 0; j < NE; j++){
     for (int i = 0; i < DN; i++){
-      eDof(DN*j+i) = DN * topOpt->element(el, j) + i; } }
+      U_loc(DN*j+i) = p_U[DN * topOpt->element(el, j) + i]; } }
 
-    for (int ii = 0; ii < DN*NE; ii++){
-    for (int jj = 0; jj < DN*NE; jj++){
-      if (topOpt->regular)
-        gradients(el,0) += p_U[ eDof(ii) ] * topOpt->ke[0](ii,jj)
-        * p_U[ eDof(jj) ];
-      else
-        gradients(el,0) += p_U[ eDof(ii) ] * topOpt->ke[el](ii,jj)
-        * p_U[ eDof(jj) ];
-    }
-    }
-    gradients(el,0) *= -p_dEdy[el];
+    if (topOpt->regular)
+      gradients(el,0) = -p_dEdy[el] * U_loc.dot(topOpt->ke[0]  * U_loc);
+    else
+      gradients(el,0) = -p_dEdy[el] * U_loc.dot(topOpt->ke[el] * U_loc);
   }
   ierr = VecRestoreArrayRead( topOpt->U, &p_U ); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead( topOpt->dEdy, &p_dEdy ); CHKERRQ(ierr);
