@@ -14,6 +14,8 @@ typedef Eigen::Array<PetscInt, -1,  1> ArrayXPI;
 typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
 typedef Eigen::Matrix<PetscScalar, -1, -1, Eigen::RowMajor> MatrixXdRM;
 typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
+typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
+typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
 
 enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, OTHER };
@@ -90,9 +92,9 @@ public:
   //Global numbering of elements and nodes stored locally
   ArrayXPI gElem, gNode;
   //Element sizes in m^numDims
-  Eigen::VectorXd elemSize;
+  VectorXPS elemSize;
   //Size of Edges in m^(numDims-1)
-  Eigen::VectorXd edgeSize;
+  VectorXPS edgeSize;
   //Elements on each edge
   ArrayXXPIRM edgeElem;
   //Flag to indicate if all elements are identical
@@ -122,11 +124,11 @@ public:
 
   /// FEM solution variables - used in each FEM iteration
   //Constitutive Matrix
-  Eigen::MatrixXd d;
+  MatrixXPS d;
   // Element Jacobian
   double detJ;
   //B and G matrices for assembling stiffness matrices
-  Eigen::MatrixXd *B, *G, *GT;
+  MatrixXPS *B, *G, *GT;
   //Integration point weights
   double *W;
   //Indices of local k matrix for constructing global K matrix
@@ -134,7 +136,7 @@ public:
   //Triplet information for assembling stiffness matrix
   std::vector<PetscInt> i, j, e;
   //Vector of values for individual elements
-  std::vector<Eigen::MatrixXd> ke;
+  std::vector<MatrixXPS> ke;
   //Force vector
   Vec F;
   //Vector of displacements from fem problem
@@ -201,7 +203,7 @@ public:
   //For normalizing perimeter
   PetscScalar PerimNormFactor;
   //Eigenvectors
-  Eigen::MatrixXd bucklingShape, dynamicShape;
+  MatrixXPS bucklingShape, dynamicShape;
   //Deflation spaces for eigenvalue problems
   Vec *bucklingDeflate, *dynamicDeflate;
   //Number of iterations for eigenvalue problems
@@ -223,12 +225,12 @@ public:
   ~TopOpt() {Clear();}
 
   // Parsing the input file
-  PetscErrorCode Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
+  PetscErrorCode Def_Param(MMA *optmma, VectorXPS &Dimensions,
                  ArrayXPI &Nel, double &Rfactor, bool &Normalization,
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
-  PetscErrorCode Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
+  PetscErrorCode Domain(Eigen::ArrayXXd &Points, const VectorXPS &Box,
               Eigen::Array<bool, -1, 1> &elemValidity);
   PetscErrorCode Def_BC();
   PetscErrorCode Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
@@ -239,14 +241,14 @@ public:
   PetscErrorCode PrepLog();
   void SetDimension(short numDims)
     { this->numDims = numDims; int pow2 = pow(2,numDims);
-      B = new Eigen::MatrixXd[pow2]; G = new Eigen::MatrixXd[pow2];
-      GT = new Eigen::MatrixXd[pow2]; W = new double[pow2]; }
+      B = new MatrixXPS[pow2]; G = new MatrixXPS[pow2];
+      GT = new MatrixXPS[pow2]; W = new double[pow2]; }
   PetscErrorCode Clear();
 
   // Printing information
   PetscErrorCode MeshOut ( );
   PetscErrorCode MeshOut (TopOpt *topOpt);
-  PetscErrorCode StepOut ( const double &f, const Eigen::VectorXd &cons,
+  PetscErrorCode StepOut ( const double &f, const VectorXPS &cons,
                            int it, long nactive );
   PetscErrorCode ResultOut ( int it );
   PetscErrorCode PrintVals ( char *name_suffix );
@@ -254,8 +256,8 @@ public:
   // Mesh Creation
   void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
                    ArrayXPI Nel, FilterArrays &filterArrays );
-  PetscErrorCode LoadMesh(Eigen::VectorXd &xIni);
-  PetscErrorCode CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel, double R,
+  PetscErrorCode LoadMesh(VectorXPS &xIni);
+  PetscErrorCode CreateMesh ( VectorXPS dimensions, ArrayXPI Nel, double R,
                    bool Reorder_Mesh, PetscInt mg_levels, PetscInt min_size );
   PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last,
                       ArrayXPI Nel, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
@@ -286,15 +288,15 @@ public:
   PetscErrorCode FEInitialize ( );
   PetscErrorCode FESolve ( );
   PetscErrorCode FEAssemble( );
-  PetscErrorCode MatIntFnc ( const Eigen::VectorXd &y );
+  PetscErrorCode MatIntFnc ( const VectorXPS &y );
 
 private:
-  Eigen::MatrixXd LocalK ( PetscInt el );
+  MatrixXPS LocalK ( PetscInt el );
+  PetscErrorCode Calc_Strain_Energy( ArrayXPS &energy );
   Eigen::ArrayXXd GaussPoints( );
-  Eigen::MatrixXd dN(double *gaussPoint);
-  void AssignB(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &B);
-  void AssignG(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &G,
-                       Eigen::MatrixXd &GT);
+  MatrixXPS dN(double *gaussPoint);
+  void AssignB(MatrixXPS &dNdx, MatrixXPS &B);
+  void AssignG(MatrixXPS &dNdx, MatrixXPS &G, MatrixXPS &GT);
 
 };
 
