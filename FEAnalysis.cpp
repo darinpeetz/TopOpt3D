@@ -247,7 +247,7 @@ int TopOpt::FEAssemble( )
   ierr = MatZeroEntries(this->K); CHKERRQ(ierr);
   PetscInt node;
   PetscInt el = -1;
-  Eigen::MatrixXd ke = p_E[0]*this->ke[0];
+  MatrixXPS ke = p_E[0]*this->ke[0];
   std::vector<PetscInt> cols(element.cols());
   /*PetscScalar *p_MaxStiff;
   ierr = VecSet(this->MaxStiff, 0.0); CHKERRQ(ierr);
@@ -321,8 +321,8 @@ int TopOpt::FESolve( )
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
   if (this->verbose >= 2)
   {
-    ierr = PetscFPrintf(comm, output, "Solving governing PDE with %s solver using %s preconditioning\n",
-                       ksptype, pctype); CHKERRQ(ierr);
+    ierr = PetscFPrintf(comm, output, "Solving governing PDE with %s solver "
+                  "using %s preconditioning\n", ksptype, pctype); CHKERRQ(ierr);
   }
   // Some extra work to do for multigrid preconditioners
   if (!strcmp(pctype,PCGAMG))
@@ -389,7 +389,8 @@ int TopOpt::FESolve( )
     }
     if (this->verbose >= 2)
     {
-      PetscFPrintf(comm, output, "Multigrid preconditioning is using %s smoothing with %s preconditioning\n",
+      PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
+                 "smoothing with %s preconditioning\n",
                   smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
     }
   }
@@ -403,13 +404,13 @@ int TopOpt::FESolve( )
     ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
     if (reason < 0)
     {
-      PetscFPrintf(comm, output, "Solve for displacements failed after %i iterations,"
-                                 " reason: %i\n", its, reason);
+      ierr = PetscFPrintf(comm, output, "Solve for displacements failed after %i "
+                       "iterations with reason: %i\n", its, reason); CHKERRQ(ierr);
     }
     else
     {
-      ierr = PetscFPrintf(comm, output, "Solve for displacements converged in %i iterations with reason: %i\n",
-                         its, reason); CHKERRQ(ierr);
+      ierr = PetscFPrintf(comm, output, "Solve for displacements converged in %i "
+                       "iterations with reason: %i\n", its, reason); CHKERRQ(ierr);
     }
   }
 
@@ -418,16 +419,17 @@ int TopOpt::FESolve( )
 
   return 0;
 }
+
 /*****************************************************/
 /**            Element Stiffness Matrix             **/
 /*****************************************************/
-Eigen::MatrixXd TopOpt::LocalK ( PetscInt el )
+MatrixXPS TopOpt::LocalK ( PetscInt el )
 {
   // Nodes per element - this currently only works for rectangular elements
   int NE = pow(2, numDims);
-  Eigen::MatrixXd Ke = Eigen::MatrixXd::Zero( numDims * NE , numDims * NE );
-  Eigen::MatrixXd dNdxi;
-  Eigen::MatrixXd coords( NE , numDims );
+  MatrixXPS Ke = MatrixXPS::Zero( numDims * NE , numDims * NE );
+  MatrixXPS dNdxi;
+  MatrixXPS coords( NE , numDims );
   Eigen::ArrayXXd GP = GaussPoints();
   for (int q = 0 ; q < GP.cols() ; q++)
   {
@@ -435,10 +437,10 @@ Eigen::MatrixXd TopOpt::LocalK ( PetscInt el )
       dNdxi = dN(GP.data() + q*numDims);
       for (int i = 0 ; i < NE ; i++)
           coords.block(i, 0, 1, numDims) = node.block(element(el, i), 0, 1, numDims);
-      Eigen::MatrixXd J = dNdxi * coords;
-      Eigen::MatrixXd InvJ = J.inverse();
+      MatrixXPS J = dNdxi * coords;
+      MatrixXPS InvJ = J.inverse();
       detJ = J.determinant();
-      Eigen::MatrixXd dNdx = InvJ*dNdxi;
+      MatrixXPS dNdx = InvJ*dNdxi;
       AssignB(dNdx, B[q]);
       AssignG(dNdx, G[q], GT[q]);
       Ke += W[q] * B[q].transpose() * d * B[q] * detJ;
@@ -482,10 +484,10 @@ Eigen::ArrayXXd TopOpt::GaussPoints( )
 /*****************************************************/
 /**       Rectangular Element Shape Functions       **/
 /*****************************************************/
-Eigen::MatrixXd TopOpt::dN(double *gaussPoint)
+MatrixXPS TopOpt::dN(double *gaussPoint)
 {
   // Shape function derivatives in parent coordinates
-  Eigen::MatrixXd dNdxi(numDims, (int)pow(2, numDims));
+  MatrixXPS dNdxi(numDims, (int)pow(2, numDims));
   double xi, eta, zeta;
   switch (numDims)
   {
@@ -542,7 +544,7 @@ Eigen::MatrixXd TopOpt::dN(double *gaussPoint)
 /*****************************************************/
 /**    Construct B matrix for given Gauss Point     **/
 /*****************************************************/
-void TopOpt::AssignB(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &B)
+void TopOpt::AssignB(MatrixXPS &dNdx, MatrixXPS &B)
 {
   switch (numDims)
   {
@@ -599,8 +601,8 @@ void TopOpt::AssignB(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &B)
 /*****************************************************/
 /**    Construct G matrix for given Gauss Point     **/
 /*****************************************************/
-void TopOpt::AssignG(Eigen::MatrixXd &dNdx, Eigen::MatrixXd &G,
-                     Eigen::MatrixXd &GT)
+void TopOpt::AssignG(MatrixXPS &dNdx, MatrixXPS &G,
+                     MatrixXPS &GT)
 {
   int numDimsSquare = pow(numDims,2);
   G.setZero(numDimsSquare, numDims*dNdx.cols());
