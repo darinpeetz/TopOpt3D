@@ -1,7 +1,7 @@
 [Params]
-    Dimensions: 0, 1, 0, 1
-    NEL: 300, 300
-    E0: 15e9
+    Dimensions: 0, 3, 0, 10
+    NEL: 30, 100
+    E0: 1000
     Nu0: 0.3
     Density: 1900
     Penalty: 1, 0.5, 4
@@ -14,49 +14,43 @@
 
     RFactor: 1.5
     MG_Coarse_Size 100
+    MG_Levels 4
 
 [/Params]
 [Domain]
 [/Domain]
-[/Functions]
+[Functions]
   Compliance
     Objective
-    Values: 1
+    Values: 0.25
     Range: 0, 1
   Volume
     Constraint
     Values: 0.5
     Range: 0, 1
-  Volume
-    Objective
-    Values: 0.018
-    Range: 0.0, 1.0
   Perimeter
     Objective
-    Values: 0.002
-    Range: -0.224572, -0.002136
+    Values: 0.25
+    Range: 0, 1
   Stability
     Objective
-    Nev: 1
-    Values: 0.02
-    Range: 1.8e-4, 0.176021
-[Functions]
+    Values: 0.25
+    Range: 0, 1
   Frequency
     Objective
-    Nev: 1
-    Values: 1
+    Values: 0.25
     Range: 0, 1
 [/Functions]
 [BC]
   Support
-    Center: 0.5, 0.0
-    Radius: 0.45, 1e-10
-    Limits: -10, 10, -10, 10
+    Center: 1.5, 0.0
+    Radius: 2.0, 1e-10
+    Limits: -100, 100, -100, 100
     Values: 1, 1
   Load
-    Center: 0.5, 1.0
-    Radius: 0.45, 1e-10
-    Limits: -10, 10, -10, 10
-    Values: 0, -100
+    Center: 1.5, 10.0
+    Radius: 2.0, 1e-10
+    Limits: -100, 100, -100, 100
+    Values: 0, -1
 [/BC]
 

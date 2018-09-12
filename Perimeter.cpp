@@ -40,6 +40,7 @@ PetscErrorCode Perimeter::Function( TopOpt *topOpt )
   }
 
   MPI_Allreduce(MPI_IN_PLACE, values.data(), 1, MPI_DOUBLE, MPI_SUM, topOpt->comm);
+
   values(0) /= -topOpt->nElem*topOpt->PerimNormFactor;
 
   // Return if sensitivities aren't needed

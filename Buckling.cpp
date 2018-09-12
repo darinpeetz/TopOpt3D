@@ -37,6 +37,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   //lopgmres.Open_File("LOPGMRES_Output.txt");
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
+
   // Get restrictors from FEM problem
   PC pcmg; PCType pctype;
   ierr = KSPGetPC(topOpt->KUF, &pcmg); CHKERRQ(ierr);
@@ -51,6 +52,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   }
   else
      SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);*/
+
   // Set Operators
   lopgmres.Set_Operators(Ks, topOpt->K);
   // Set target eigenvalues
@@ -61,6 +63,8 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
   // Compute the eigenvalues
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
+
+  // Get the results
   PetscInt nev_conv = lopgmres.Get_nev_conv();
   if (nev_conv == 0)
   {
@@ -73,13 +77,13 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   lopgmres.Get_Eigenvalues(lambda.data());
 
   // Get the eigenvectors and check for locality
-  Vec *phi, phi_copy;
+  /*Vec *phi, phi_copy;
   lopgmres.Get_Eigenvectors(&phi);
   PetscReal norm1, norminf;
 
   ierr = VecNorm(phi[0], NORM_1, &norm1); CHKERRQ(ierr);
   ierr = VecNorm(phi[0], NORM_INFINITY, &norminf); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Norm ratio: %1.8g\n\n", norm1/norminf); CHKERRQ(ierr);
+  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Norm ratio: %1.8g\n\n", norm1/norminf); CHKERRQ(ierr);*/
 
   // Number of converged eigenvalues to use for optimization
   nev_conv -= (target_type == TOTAL_NEV || nev_conv <= nvals) ? 0 : 1;
@@ -96,6 +100,8 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     return 0;
 
   // Make sure we have enough room for all eigenvectors
+  Vec *phi, phi_copy;
+  lopgmres.Get_Eigenvectors(&phi);
   topOpt->bucklingShape.resize(topOpt->bucklingShape.rows(), nev_conv);
   ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
   for (int i = 0; i < nev_conv; i++)

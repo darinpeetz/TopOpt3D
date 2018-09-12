@@ -47,240 +47,39 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
     ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
   }
 
-PetscInt total_conv = 0, iter = 10, nev = 5, its = 0;
-FILE *timings;
-ierr = PetscFOpen(topOpt->comm, "Timings", "a", &timings); CHKERRQ(ierr);
-ierr = PetscOptionsGetInt(NULL, NULL, "-nepssolves", &iter, NULL); CHKERRQ(ierr);
-ierr = PetscOptionsGetInt(NULL, NULL, "-nevals", &nev, NULL); CHKERRQ(ierr);
-PetscBool run = PETSC_FALSE;
-PetscOptionsHasName(NULL, NULL, "-run_KS", &run);
-double t0 = MPI_Wtime();
-for (int i = 0; i < run*iter; i++)
-{
-  EPS eps; ST st; KSP ksp; PC pc;
-  ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
-  ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
-  ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
-  //ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_MAGNITUDE); CHKERRQ(ierr);
-  ierr = EPSSetTolerances(eps, pow(10,log10(2*topOpt->nNode)/2-8), PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
-  ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(ksp, KSPPREONLY); CHKERRQ(ierr);
-  ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-  ierr = PCSetType(pc, PCLU); CHKERRQ(ierr);
-  ierr = PCFactorSetMatSolverPackage(pc, MATSOLVERSUPERLU_DIST); CHKERRQ(ierr);
-  ierr = EPSSetDimensions(eps, nev, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSSetType(eps, EPSKRYLOVSCHUR); CHKERRQ(ierr);
-  ierr = EPSSetOperators(eps, M, topOpt->K); CHKERRQ(ierr);
-  //ierr = EPSSetOperators(eps, topOpt->K, M); CHKERRQ(ierr);
-  ierr = EPSSetOptionsPrefix(eps, "KS_"); CHKERRQ(ierr);
-  ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
-  ierr = EPSSolve(eps); CHKERRQ(ierr);
-  PetscInt nconv = 0;
-  ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
-  total_conv += nconv;
-  PetscInt it = 0;
-  ierr = EPSGetIterationNumber(eps, &it); CHKERRQ(ierr);
-  its += it;
-  ierr = EPSDestroy(&eps); CHKERRQ(ierr);
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "Using KRYLOVSCHUR, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processor\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs); CHKERRQ(ierr);
-
-total_conv = 0;
-its = 0;
-PetscOptionsHasName(NULL, NULL, "-run_LOBPCG", &run);
-t0 = MPI_Wtime();
-for (int i = 0; i < run*iter; i++)
-{
-  EPS eps; ST st; KSP ksp; PC pc, JUNK;
-  ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
-  ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
-  ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
-  ierr = EPSSetTolerances(eps, pow(10,log10(2*topOpt->nNode)/2-8), PETSC_DEFAULT); CHKERRQ(ierr);
-  // Setting up krylov ST structure
-  ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
-  ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);
-  ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-  ierr = PCSetType(pc, PCMG); CHKERRQ(ierr);
-  ierr = KSPSetOperators(ksp, topOpt->K, topOpt->K); CHKERRQ(ierr);
-  PetscInt nlevels = topOpt->PR.size()+1;
-  ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
-  ierr = PCMGSetType(pc, PC_MG_FULL); CHKERRQ(ierr);
-  ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
-  for (int i = 1; i < nlevels; i++) {
-  ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
-  // Use direct solve on coarse level
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
-  ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
-  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-  ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
-  ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
-  ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
-  ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
-  ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
-  ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
-  ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
-  ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  // Use Jacobi smoothing
-  for (int i = 1; i < nlevels; i++)
-  {
-  ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-  ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-  ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
-  }
-
-  ierr = EPSSetDimensions(eps, nev, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSSetType(eps, EPSLOBPCG); CHKERRQ(ierr);
-  ierr = EPSSetOperators(eps, topOpt->K, M); CHKERRQ(ierr);
-  ierr = EPSSetOptionsPrefix(eps, "LOBPCG_"); CHKERRQ(ierr);
-  ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
-  ierr = EPSSolve(eps); CHKERRQ(ierr);
-  PetscInt nconv = 0;
-  ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
-  total_conv += nconv;
-  PetscInt it = 0;
-  ierr = EPSGetIterationNumber(eps, &it); CHKERRQ(ierr);
-  its += it;
-  ierr = KSPSetPC(ksp, JUNK); CHKERRQ(ierr);
-  ierr = MatAssemblyBegin(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = MatAssemblyEnd(topOpt->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = EPSDestroy(&eps); CHKERRQ(ierr);
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "Using LOBPCG, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
-
-total_conv = 0;
-its = 0;
-PetscOptionsHasName(NULL, NULL, "-run_JD", &run);
-t0 = MPI_Wtime();
-for (int i = 0; i < run*iter; i++)
-{
-  EPS eps; ST st; KSP ksp; PC pc;
-  // Setting up eps solver
-  ierr = EPSCreate(topOpt->comm, &eps); CHKERRQ(ierr);
-  ierr = EPSSetProblemType(eps, EPS_GHEP); CHKERRQ(ierr);
-  ierr = EPSSetWhichEigenpairs(eps, EPS_SMALLEST_REAL); CHKERRQ(ierr);
-  //ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
-  ierr = EPSSetTolerances(eps, pow(10,log10(2*topOpt->nNode)/2-8), PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSSetDimensions(eps, nev, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-  ierr = EPSSetType(eps, EPSJD); CHKERRQ(ierr);
-  ierr = EPSSetOperators(eps, topOpt->K, M); CHKERRQ(ierr);
-  //ierr = EPSSetOperators(eps, M, topOpt->K); CHKERRQ(ierr);
-  // Setting up krylov ST structure
-  ierr = EPSGetST(eps, &st); CHKERRQ(ierr);
-  ierr = STGetKSP(st, &ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(ksp, KSPCG); CHKERRQ(ierr);
-  ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-  ierr = PCSetType(pc, PCMG); CHKERRQ(ierr);
-  ierr = KSPSetOperators(ksp, topOpt->K, topOpt->K); CHKERRQ(ierr);
-  PetscInt nlevels = topOpt->PR.size()+1;
-  ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
-  ierr = PCMGSetType(pc, PC_MG_MULTIPLICATIVE); CHKERRQ(ierr);
-  ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
-  for (int i = 1; i < nlevels; i++) {
-  ierr = PCMGSetInterpolation(pc, i, topOpt->PR[nlevels-i-1]); CHKERRQ(ierr); }
-  // Use direct solve on coarse level
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
-  ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
-  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-  ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
-  ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
-  ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
-  ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
-  ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
-  ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
-  ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
-  ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
-  ierr = PCSetUp(pc); CHKERRQ(ierr);
-  // Use Jacobi smoothing
-  for (int i = 1; i < nlevels; i++)
-  {
-  ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-  ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-  ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-  ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-  ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
-  }
-
-  // Solve the eigenvalue problem
-  ierr = EPSSetOptionsPrefix(eps, "JD_"); CHKERRQ(ierr);
-  ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
-  ierr = EPSSolve(eps); CHKERRQ(ierr);
-  PetscInt nconv = 0;
-  ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
-  total_conv += nconv;
-  PetscInt it = 0;
-  ierr = EPSGetIterationNumber(eps, &it); CHKERRQ(ierr);
-  its += it;
-
-  ierr = EPSDestroy(&eps); CHKERRQ(ierr);
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "Using built-in JD, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
-
-total_conv = 0; its = 0;
-PetscOptionsHasName(NULL, NULL, "-run_JDMG", &run);
-t0 = MPI_Wtime();
-for (int i = 0; i < run*iter; i++)
-{
-  // Create JDMG instance
-  JDMG jdmg(topOpt->comm);
-  jdmg.Set_Verbose(topOpt->verbose);
-  jdmg.Set_File(topOpt->output);
+  // Create LOPGMRES instance
+  LOPGMRES lopgmres(topOpt->comm);
+  lopgmres.Set_Verbose(topOpt->verbose);
+  lopgmres.Set_File(topOpt->output);
   // Get restrictors from FEM problem
-  ierr = jdmg.Set_Hierarchy(topOpt->PR, topOpt->MG_comms); CHKERRQ(ierr);
-  // Set Operators
-  jdmg.Set_Operators(topOpt->K, M);
-  // Set target eigenvalues
-  Nev_Type target_type = TOTAL_NEV;
-  jdmg.Set_Target(SR, nev, target_type);
-  jdmg.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
-  jdmg.Set_Cycle(VCycle);
-  ierr = jdmg.Compute(); CHKERRQ(ierr);
-  total_conv += jdmg.Get_nev_conv();
-  its += jdmg.Get_Iterations();
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "Using JDMG, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
+  ierr = lopgmres.Set_Hierarchy(topOpt->PR, topOpt->MG_comms); CHKERRQ(ierr);
 
-total_conv = 0; its = 0;
-PetscOptionsHasName(NULL, NULL, "-run_LOPGMRES", &run);
-t0 = MPI_Wtime();
-for (int i = 0; i < run*iter; i++)
-{
-  // Create JDMG instance
-  LOPGMRES jdmg(topOpt->comm);
-  jdmg.Set_Verbose(topOpt->verbose);
-  jdmg.Set_File(topOpt->output);
-  // Get restrictors from FEM problem
-  ierr = jdmg.Set_Hierarchy(topOpt->PR, topOpt->MG_comms); CHKERRQ(ierr);
   // Set Operators
-  jdmg.Set_Operators(topOpt->K, M);
+  lopgmres.Set_Operators(M, topOpt->K);
   // Set target eigenvalues
-  Nev_Type target_type = TOTAL_NEV;
-  jdmg.Set_Target(SR, nev, target_type);
-  jdmg.Set_Tol(pow(10,log10(2*topOpt->nNode)/2-8));
-  jdmg.Set_Cycle(VCycle);
-  ierr = jdmg.Compute(); CHKERRQ(ierr);
-  total_conv += jdmg.Get_nev_conv();
-  its += jdmg.Get_Iterations();
-}
-ierr = PetscFPrintf(topOpt->comm, timings, "Using LOPGMRES, frequency found %i eigenvalues in %1.8g seconds, taking %i iterations for a problem of size %i on %i processors with %i levels in the multigrid\n", total_conv, MPI_Wtime()-t0, its, 2*topOpt->nNode, topOpt->nprocs, topOpt->PR.size()+1); CHKERRQ(ierr);
-ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
+  Nev_Type target_type = UNIQUE_LAST_NEV;
+  lopgmres.Set_Target(LR, nvals, target_type);
+  lopgmres.Set_Tol(std::pow(10, std::log10(2*topOpt->nNode)/2-9));
+  lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
+  lopgmres.Set_Cycle(FMGCycle);
+  ierr = lopgmres.Compute(); CHKERRQ(ierr);
 
-  JDMG jdmg; Nev_Type target_type;
   // Get the results
-  PetscInt nev_conv = jdmg.Get_nev_conv();
-  nev_conv -= (target_type == TOTAL_NEV) ? 0 : 1;
+  PetscInt nev_conv = lopgmres.Get_nev_conv();
+  if (nev_conv == 0)
+  {
+    char name_suffix[30];
+    sprintf(name_suffix, "_eigen_failure");
+    ierr = topOpt->PrintVals(name_suffix); CHKERRQ(ierr);
+    SETERRQ(topOpt->comm, PETSC_ERR_CONV_FAILED, "Eigensolver found 0 eigenvalues\n");
+  }
   VectorXPS lambda(nev_conv);
-  jdmg.Get_Eigenvalues(lambda.data());
+  lopgmres.Get_Eigenvalues(lambda.data());
 
+  // Number of converged eigenvalues to use for optimization
+  nev_conv -= (target_type == TOTAL_NEV) ? 0 : 1;
+
+  // Mertge any duplicate eigenvalues
   for (short j = 0; j < nvals-1; j++)
     values(j) = lambda[j];
   for (short j = nvals-1; j < nev_conv; j++)
@@ -291,8 +90,10 @@ ierr = PetscFClose(topOpt->comm, timings); CHKERRQ(ierr);
   if (calc_gradient == PETSC_FALSE)
     return 0;
 
+  // Make sure we have enough room for all eigenvectors
   Vec *phi, phi_copy;
-  jdmg.Get_Eigenvectors(&phi);
+  lopgmres.Get_Eigenvectors(&phi);
+  topOpt->dynamicShape.resize(topOpt->dynamicShape.rows(), nev_conv);
   ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
   for (int i = 0; i < nev_conv; i++)
   {

@@ -185,16 +185,6 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   }
   ierr = VecAssemblyBegin(MLump); CHKERRQ(ierr);
 
-  // Matrix of spring stiffnesses
-  /*ierr = MatCreate(Comm, &spK); CHKERRQ(ierr);
-  ierr = MatSetSizes(spK, numDims*nLocNode, numDims*nLocNode,
-                        numDims*nNode, numDims*nNode); CHKERRQ(ierr);
-  ierr = MatSetOptionsPrefix(spK,"spK_"); CHKERRQ(ierr);
-  ierr = MatSetFromOptions(spK); CHKERRQ(ierr);
-  ArrayXPI spOnDiag = ArrayXPI::Ones(topOpt->numDims*nLocNode);
-  ArrayXPI spOffDiag = ArrayXPI::Zero(topOpt->numDims*nLocNode);
-  ierr = MatXAIJSetPreallocation(spK, 1, spOnDiag.data(), spOffDiag.data(), 0, 0); CHKERRQ(ierr);*/
-
   // Create solver context
   ierr = KSPCreate(comm, &KUF); CHKERRQ(ierr);
   ierr = KSPSetType(KUF, KSPGMRES); CHKERRQ(ierr);
@@ -246,12 +236,8 @@ int TopOpt::FEAssemble( )
   // Reassemble K
   ierr = MatZeroEntries(this->K); CHKERRQ(ierr);
   PetscInt node;
-  PetscInt el = -1;
   MatrixXPS ke = p_E[0]*this->ke[0];
   std::vector<PetscInt> cols(element.cols());
-  /*PetscScalar *p_MaxStiff;
-  ierr = VecSet(this->MaxStiff, 0.0); CHKERRQ(ierr);
-  ierr = VecGetArray(this->MaxStiff, &p_MaxStiff); CHKERRQ(ierr);*/
   for (long el = 0; el < element.rows(); el++)
   {
     if (!regular)
@@ -269,31 +255,14 @@ int TopOpt::FEAssemble( )
           this->element.cols(), cols.data(), ke.data() +
           ke.rows()*this->numDims*(nd % this->element.cols()), ADD_VALUES);
         CHKERRQ(ierr);
-        /*for (short dof = 0; dof < this->numDims; dof++)
-          p_MaxStiff[this->numDims*node + dof] =
-            std::max(p_MaxStiff[this->numDims*node + dof], p_E[el]);*/
       }
     }
   }
-  /*PetscScalar eps = 1e-12;
-  for (int d = 0; d < this->nLocNode*this->numDims; d++)
-    p_MaxStiff[d] = eps/(p_MaxStiff[d]+eps);
-  ierr = VecRestoreArray(this->MaxStiff, &p_MaxStiff); CHKERRQ(ierr);*/
       
   ierr = MatAssemblyBegin(this->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead(this->E, &p_E); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(this->K, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
-  // Fix unattached dof
-  /*Vec D; PetscScalar *p_D;
-  ierr = VecDuplicate(this->F, &D); CHKERRQ(ierr);
-  ierr = MatGetDiagonal(this->K, D); CHKERRQ(ierr);
-  ierr = VecGetArray(D, &p_D); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > Diag(p_D, numDims*nLocNode);
-  Diag = (Diag == 0.0).cast<PetscScalar>();
-  ierr = VecRestoreArray(D, &p_D); CHKERRQ(ierr);
-  ierr = MatDiagonalSet(this->K, D, ADD_VALUES); CHKERRQ(ierr);*/
-//  ierr = MatDiagonalSet(this->K, this->MaxStiff, ADD_VALUES); CHKERRQ(ierr);
   // Apply Spring B.C.'s
   ierr = MatDiagonalSet(this->K, this->spKVec, ADD_VALUES); CHKERRQ(ierr);
   // Apply Dirichlet B.C.'s
