@@ -256,14 +256,14 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   ierr = VecRestoreArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
 
   /// Construct sensitivity of material stiffness matrix
-  const PetscScalar *p_dEdy;
-  ierr = VecGetArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
-  Eigen::Map< const Eigen::VectorXd > dEdy(p_dEdy, topOpt->nLocElem);
+  const PetscScalar *p_dEdz;
+  ierr = VecGetArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
+  Eigen::Map< const Eigen::VectorXd > dEdz(p_dEdz, topOpt->nLocElem);
   MatrixXPS dKdy;
   if (topOpt->regular)
   {
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    dKdy = Eigen::kroneckerProduct(dEdy, ke);
+    dKdy = Eigen::kroneckerProduct(dEdz, ke);
   }
   else
   {
@@ -276,10 +276,10 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     for (unsigned int el = 0; el < topOpt->ke.size(); el++)
     {
     new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
-    dKdy.block(ind, 0, ke.size(), 1) = dEdy(el)*ke;
+    dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
     }
   }
-  ierr = VecRestoreArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
   MatrixXPS df = MatrixXPS::Zero(dKdy.rows(),nvals);
@@ -300,11 +300,11 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
 
   /// dCdrhof*drhofdrho
   Vec dlamdy;
-  ierr = VecDuplicate( topOpt->dEdy, &dlamdy ); CHKERRQ(ierr);
+  ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
   for (short i = 0; i < nvals; i++)
   {
     ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
-    ierr = Chain_Filter( topOpt->P, dlamdy ); CHKERRQ(ierr);
+    ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
     ierr = VecResetArray( dlamdy ); CHKERRQ(ierr);
   }
   ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
@@ -332,9 +332,9 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
   long dksmarker = 0;
 
   // Get pointers to Petsc vectors
-  const PetscScalar *p_Es, *p_dEsdy, *p_U;
+  const PetscScalar *p_Es, *p_dEsdz, *p_U;
   ierr = VecGetArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
-  ierr = VecGetArrayRead(topOpt->dEsdy, &p_dEsdy); CHKERRQ(ierr);
+  ierr = VecGetArrayRead(topOpt->dEsdz, &p_dEsdz); CHKERRQ(ierr);
   ierr = VecGetArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
 
   MatrixXPS ks = MatrixXPS::Zero(DE, DE);
@@ -365,7 +365,7 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
     /// Fill in dKsdy for local elements
     if (el < topOpt->nLocElem)
     {
-    dKsdy.segment(dksmarker, ksVec.size()) = -p_dEsdy[el]*ksVec;
+    dKsdy.segment(dksmarker, ksVec.size()) = -p_dEsdz[el]*ksVec;
     dksmarker += ksVec.size();
     }
 
@@ -391,7 +391,7 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
 
   ierr = MatAssemblyBegin(Ks, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
-  ierr = VecRestoreArrayRead(topOpt->dEsdy, &p_dEsdy); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->dEsdz, &p_dEsdz); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(Ks, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 

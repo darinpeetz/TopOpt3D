@@ -18,13 +18,13 @@ PetscErrorCode Volume::Function( TopOpt *topOpt )
   /// Sensitivities
   // dVdrhof
   Vec dVdy;
-  ierr = VecDuplicate( topOpt->dVdy, &dVdy ); CHKERRQ(ierr);
+  ierr = VecDuplicate( topOpt->dVdrho, &dVdy ); CHKERRQ(ierr);
   ierr = VecPlaceArray( dVdy, gradients.data() ); CHKERRQ(ierr);
-  ierr = VecCopy( topOpt->dVdy, dVdy ); CHKERRQ(ierr);
+  ierr = VecCopy( topOpt->dVdrho, dVdy ); CHKERRQ(ierr);
   ierr = VecScale( dVdy, 1.0/topOpt->nElem ); CHKERRQ(ierr);
 
   // dVdrhof*drhofdrho
-  ierr = Chain_Filter( topOpt->P, dVdy ); CHKERRQ(ierr);
+  ierr = topOpt->Chain_Filter( dVdy, NULL ); CHKERRQ(ierr);
 
   ierr = VecResetArray( dVdy ); CHKERRQ(ierr);
   ierr = VecDestroy( &dVdy ); CHKERRQ(ierr);

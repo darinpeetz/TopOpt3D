@@ -9,7 +9,7 @@ typedef Eigen::Matrix<PetscScalar, -1, 1>  VectorXPS;
 
 class TopOpt;
 
-enum FUNCTION_TYPE {COMPLIANCE, PERIMETER, VOLUME, STABILITY, FREQUENCY};
+enum FUNCTION_TYPE {COMPLIANCE, VOLUME, STABILITY, FREQUENCY};
 
 class Function_Base
 {
@@ -52,8 +52,6 @@ protected:
   MatrixXPS gradients;
   VectorXPS gradient;
 
-  // Apply filter for chain rule
-  PetscErrorCode Chain_Filter(Mat P, Vec x);
   // Compute internal function values
   virtual PetscErrorCode Function(TopOpt* topOpt) = 0;
 };
@@ -63,16 +61,6 @@ class Compliance : public Function_Base
 public:
   Compliance(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {func_type = COMPLIANCE;}
   ~Compliance() {}
-
-protected:
-  PetscErrorCode Function(TopOpt *topOpt);
-};
-
-class Perimeter : public Function_Base
-{
-public:
-  Perimeter(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {func_type = PERIMETER;}
-  ~Perimeter() {}
 
 protected:
   PetscErrorCode Function(TopOpt *topOpt);

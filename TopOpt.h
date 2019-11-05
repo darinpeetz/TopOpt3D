@@ -19,37 +19,7 @@ typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
 
 enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, OTHER };
-enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC, SIMP_SMOOTH };
-
-/// Class used to keep track of filter information before assembly
-/// Implementation is available in Filter.cpp
-class FilterArrays
-{
-public:
-  PetscInt nElem;
-  ArrayXXPIRM elements;
-  Eigen::Array<bool, -1, 1> modified;
-  Eigen::ArrayXd distances;
-
-  void Truncate(PetscInt nElem)
-  {
-    this->nElem = nElem;
-    elements.conservativeResize(nElem,2);
-    modified.conservativeResize(nElem);
-    distances.conservativeResize(nElem);
-  }
-
-  void Reset(PetscInt nElem)
-  {
-    this->nElem = nElem;
-    elements.resize(nElem, 2); modified.setZero(nElem); distances.resize(nElem);
-  }
-  void Clear()
-  {
-    Reset(0);
-  }
-
-};
+enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC };
 
 /// The master structure containing all information to be carried between iterations
 class TopOpt
@@ -85,18 +55,14 @@ public:
   ArrayXPI elmdist;
   //How nodes are distributed on processes
   ArrayXPI nddist;
-  //Total number of nodes, elements, and edges
-  PetscInt nNode, nElem, nEdges;
+  //Total number of nodes and elements
+  PetscInt nNode, nElem;
   //Number of local nodes and elements
   PetscInt nLocElem, nLocNode;
   //Global numbering of elements and nodes stored locally
   ArrayXPI gElem, gNode;
   //Element sizes in m^numDims
   VectorXPS elemSize;
-  //Size of Edges in m^(numDims-1)
-  VectorXPS edgeSize;
-  //Elements on each edge
-  ArrayXXPIRM edgeElem;
   //Flag to indicate if all elements are identical
   bool regular;
 
@@ -188,20 +154,26 @@ public:
 
   /// Optimization variables
   //penalization factor information
-  double penal, pmin, pmax, pstep;
-  //Filter Matrix
+  PetscScalar penal, vdPenal;
+  std::vector<PetscScalar> penalties;
+  std::vector<PetscScalar> void_penalties;
+  //Minimum Radius Filter Matrix
   Mat P;
+  //Maximum Length Scale Filter Matrix
+  Mat R; Vec REdge;
+  //Minimum number of voids within Rmax
+  PetscScalar vdMin;
   //Material Interpolation type
   MATINT interpolation;
   std::vector<PetscScalar> interp_param;
   //Material Interpolation Values
-  Vec V, dVdy, E, dEdy, Es, dEsdy;
+  Vec V, dVdrho, E, dEdz, Es, dEsdz;
+  //Intermediate values for material interpoloation
+  Vec rhoq, y;
   //Raw densities and filtered densities, rho = P*x
   Vec x, rho;
   //Active vs. passive elements
   Eigen::Array<bool, -1, 1> active;
-  //For normalizing perimeter
-  PetscScalar PerimNormFactor;
   //Eigenvectors
   MatrixXPS bucklingShape, dynamicShape;
   //Deflation spaces for eigenvalue problems
@@ -225,8 +197,8 @@ public:
   ~TopOpt() {Clear();}
 
   // Parsing the input file
-  PetscErrorCode Def_Param(MMA *optmma, VectorXPS &Dimensions,
-                 ArrayXPI &Nel, double &Rfactor, bool &Normalization,
+  PetscErrorCode Def_Param(MMA *optmma, VectorXPS &Dimensions, ArrayXPI &Nel,
+                 double &Rmin, double &Rmax, bool &Normalization,
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
@@ -254,11 +226,12 @@ public:
   PetscErrorCode PrintVals ( char *name_suffix );
 
   // Mesh Creation
-  void RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
-                   ArrayXPI Nel, FilterArrays &filterArrays );
+  PetscErrorCode RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
+                   ArrayXPI Nel, Mat &Filter, PetscScalar nonzeros=0 );
   PetscErrorCode LoadMesh(VectorXPS &xIni);
-  PetscErrorCode CreateMesh ( VectorXPS dimensions, ArrayXPI Nel, double R,
-                   bool Reorder_Mesh, PetscInt mg_levels, PetscInt min_size );
+  PetscErrorCode CreateMesh ( VectorXPS dimensions, ArrayXPI Nel, double Rmin,
+                              double Rmax, bool Reorder_Mesh, 
+                              PetscInt mg_levels, PetscInt min_size );
   PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last,
                       ArrayXPI Nel, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                       ArrayXPI *cList, PetscInt mg_levels );
@@ -266,17 +239,15 @@ public:
               ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
   PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                          ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode Edge_Info ( PetscInt *first, PetscInt *last, double *dx );
   PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
-                    int nInterfaceNodes, FilterArrays &filterArrays,
-                    ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels );
-  idx_t ReorderParMetis( FilterArrays &filterArrays, bool Reorder_Mesh,
+                    int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J,
+                    ArrayXPI *cList, int mg_levels );
+  idx_t ReorderParMetis( bool Reorder_Mesh,
                   idx_t nparts = 0, idx_t ncommonnodes = 0, double *tpwgts = NULL,
                   double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
                   idx_t *elmwgt = NULL, idx_t wgtflag = 0, idx_t numflag = 0 );
 
-  PetscErrorCode ElemDist(FilterArrays &filterArrays,
-                          Eigen::Array<idx_t, -1, 1> &partition);
+  PetscErrorCode ElemDist(Eigen::Array<idx_t, -1, 1> &partition);
   PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                           ArrayXPI *cList, int mg_levels);
   PetscErrorCode Expand_Elem();
@@ -289,6 +260,8 @@ public:
   PetscErrorCode FESolve ( );
   PetscErrorCode FEAssemble( );
   PetscErrorCode MatIntFnc ( const VectorXPS &y );
+  // Apply filter for chain rule
+  PetscErrorCode Chain_Filter(Vec dfdE, Vec dfdV);
 
 private:
   MatrixXPS LocalK ( PetscInt el );

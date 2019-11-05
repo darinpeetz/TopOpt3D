@@ -104,44 +104,8 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
       break;
   }
 
-  // Read in edge information
-  // First read in all edge element information
-  filename = folder + "/edges.bin";
-  input.open(filename.c_str(), ios::ate | ios::binary);
-  if (!input.is_open())
-    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open edges file");
-  filesize = input.tellg();
-  input.seekg(0);
-  nEdges = filesize/sizeof(PetscInt)/2;
-  ArrayXXPIRM temp_edge(nEdges, 2);
-  input.read((char*)temp_edge.data(), filesize);
-  input.close();
-  // Now find what part is local and extract it
-  PetscInt begin = 0, finish = temp_edge.rows();
-  for (int i = 0; i < temp_edge.rows(); i++)
-  {
-    if (temp_edge(i,0) < elmdist(myid))
-      begin++;
-    if (temp_edge(i,0) >= elmdist(myid+1))
-    {
-      finish = i;
-      break;
-    }
-  }
-  edgeElem = temp_edge.block(begin, 0, finish-begin, 2);
-  // Now get edge lengths
-  filename = folder + "/edgeLengths.bin";
-  input.open(filename.c_str(), ios::ate | ios::binary);
-  if (!input.is_open())
-    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open edge lengths file");
-  filesize = input.tellg();
-  input.seekg(begin*sizeof(PetscScalar));
-  edgeSize.resize(edgeElem.rows());
-  input.read((char*)edgeSize.data(), edgeSize.size()*sizeof(PetscScalar));
-  input.close();
-
   // Read in BC's
-  // Similar to edge information, have to read it all in and parse it later
+  // Have to read it all in and parse it later
   // Loads first
   filename = folder + "/loadNodes.bin";
   input.open(filename.c_str(), ios::ate | ios::binary);
@@ -153,7 +117,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   input.read((char*)temp_node.data(), filesize);
   input.close();
   // Now find what part is local and extract it
-  begin = 0; finish = temp_node.rows();
+  PetscInt begin = 0, finish = temp_node.rows();
   for (int i = 0; i < temp_node.rows(); i++)
   {
     if (temp_node(i) < nddist(myid))
@@ -303,13 +267,6 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   if (numDims > 2)
     temp *= node(element(0,7),2) - node(element(0,0),2);
   elemSize.setConstant(nLocElem, temp);
-  // Perimeter normalization factor
-  PerimNormFactor = 0;
-  PerimNormFactor += elemSize(0)/(node(element(0,1),0) - node(element(0,0),0));
-  if (numDims > 1)
-    PerimNormFactor += elemSize(0)/(node(element(0,3),1) - node(element(0,0),1));
-  if (numDims > 2)
-    PerimNormFactor += elemSize(0)/(node(element(0,7),2) - node(element(0,0),2));
 
   // Read in the filter matrix
   PetscViewer view;
@@ -324,6 +281,28 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   ierr = MatSetSizes(this->P, nLocElem, nLocElem, nElem, nElem); CHKERRQ(ierr);
   ierr = MatLoad(this->P, view); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&view);
+
+  filename = folder + "/Max_Filter.bin";
+  input.open(filename.c_str(), ios::ate);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open max feature filter file");
+  input.close();
+  ierr = PetscViewerBinaryOpen(comm, filename.c_str(), FILE_MODE_READ, &view);
+  ierr = MatCreate(comm, &this->R); CHKERRQ(ierr);
+  ierr = MatSetType(this->R, MATAIJ); CHKERRQ(ierr);
+  ierr = MatSetSizes(this->R, nLocElem, nLocElem, nElem, nElem); CHKERRQ(ierr);
+  ierr = MatLoad(this->R, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view);
+
+  filename = folder + "/Void_Edge_Volume.bin";
+  input.open(filename.c_str(), ios::ate);
+  if (!input.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open max feature filter file");
+  input.close();
+  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
+  ierr = PetscViewerBinaryOpen(comm, filename.c_str(), FILE_MODE_READ, &view);
+  ierr = VecLoad(this->REdge, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
   // Read in the multigrid hierarchy
   this->PR.resize(0);
@@ -359,9 +338,10 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   // Initial design values
   xIni.setOnes(nLocElem); xIni *= 0.5;
   ierr = VecPlaceArray(this->x, xIni.data()); CHKERRQ(ierr); 
-  for (penal = pmin; penal <= pmax; penal += pstep)
+  for (unsigned int pi = 0; pi < this->penalties.size(); pi++)
   {
-    stringstream strmid; strmid << penal;
+    this->penal = this->penalties[pi];
+    stringstream strmid; strmid << this->penal;
     filename = folder + "/x_pen" + strmid.str() + ".bin";
     input.open(filename.c_str(), ios::binary);
     if (!input.is_open())
@@ -382,8 +362,9 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
 /*****************************************************************/
 /**                      Create Base Mesh                       **/
 /*****************************************************************/
-PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
-                                    double R, bool Reorder_Mesh, int mg_levels,
+PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
+                                    double Rmin, double Rmax,
+                                    bool Reorder_Mesh, int mg_levels,
                                     PetscInt min_size )
 {
   PetscErrorCode ierr = 0;
@@ -489,8 +470,18 @@ PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
     dx[i] = (dimensions(2*i+1) - dimensions(2*i))/Nel(i);
     elemSize *= dx[i];
   }
-  FilterArrays filterArrays;
-  RecFilter ( first, last, dx, R, Nel, filterArrays );
+  ierr = RecFilter(first, last, dx, Rmin, Nel, this->P); CHKERRQ(ierr);
+
+  ierr = RecFilter(first, last, dx, Rmax, Nel, this->R, 1); CHKERRQ(ierr);
+  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
+  ierr = MatGetRowSum(this->R, this->REdge); CHKERRQ(ierr);
+  PetscScalar rowSumMax;
+  ierr = VecMax(this->REdge, NULL, &rowSumMax); CHKERRQ(ierr);
+  Vec Rtemp;
+  ierr = VecDuplicate(this->REdge, &Rtemp); CHKERRQ(ierr);
+  ierr = VecSet(Rtemp, rowSumMax); CHKERRQ(ierr);
+  ierr = VecAYPX(this->REdge, -1, Rtemp); CHKERRQ(ierr);
+  ierr = VecDestroy(&Rtemp); CHKERRQ(ierr);
 
   // Create the geometric coarse-grid restrictions
   ArrayXPI I[mg_levels-1], J[mg_levels-1], cList[mg_levels-1];
@@ -545,9 +536,6 @@ PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
   for (int i = this->numDims; i < 3; i++)
     first[i]--;
 
-  // Assemble arrays containing perimeter information
-  Edge_Info( first, last, dx );
-
   /// Apply shape functions to base mesh
   // Start by determining center of every element
   Eigen::ArrayXXd elemCenters = Eigen::ArrayXXd::Zero(this->nLocElem,this->numDims);
@@ -574,7 +562,7 @@ PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
   }
 
   /// Remove unwanted elements
-  // Number of ghost elements long processor boundaries
+  // Number of ghost elements along processor boundaries
   int padding = 1;
   for (short dim = 0; dim < numDims-1; dim++)
     padding *= Nel(dim);
@@ -591,12 +579,11 @@ PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
     int nInterfaceNodes = 1;
     for (int dim = 1; dim < numDims; dim++)
       nInterfaceNodes *= Nel(dim-1)+1;
-    ApplyDomain(elemValidity, padding, nInterfaceNodes, filterArrays, I, J, cList, mg_levels);
+    ApplyDomain(elemValidity, padding, nInterfaceNodes, I, J, cList, mg_levels);
   }
 
   /// Get a better distribution of elements
-  ReorderParMetis(filterArrays, Reorder_Mesh);
-  filterArrays.Reset(0);
+  ReorderParMetis(Reorder_Mesh);
   double temp = elemSize(0);
   elemSize.setConstant(nLocElem, temp);
 
@@ -626,99 +613,10 @@ PetscErrorCode TopOpt::CreateMesh ( Eigen::VectorXd dimensions, ArrayXPI Nel,
 }
 
 /*****************************************************************/
-/**                          Edge Info                          **/
-/*****************************************************************/
-PetscErrorCode TopOpt::Edge_Info ( PetscInt *first, PetscInt *last, double *dx )
-{
-  PetscErrorCode ierr = 0;
-
-  PetscInt Nel[3] = {last[0]-first[0], last[1]-first[1], last[2]-first[2]};
-  PerimNormFactor = 0;
-  for (short dim = 0; dim < numDims; dim++)
-    PerimNormFactor += elemSize(0)/dx[dim];
-
-  if (Nel[0] == 0 || Nel[1] == 0 || Nel[2] == 0)
-    return ierr;
-  /// dim == 0 => Edges with a normal in the x-direction
-  /// dim == 1 => Edges with a normal in the y-direction
-  /// dim == 2 => Edges with a normal in the z-direction
-  // Element spacing between elements on each side of edge
-  int spacing = 1;
-  // Curent size of edgeElem
-  int numExisting = 0;
-  // Size of an element
-  for (short dim = 0; dim < numDims; dim++)
-  {
-    if (dim > 0)
-      spacing *= Nel[dim-1];
-    if (dim == numDims-1 && myid > 0)
-    {
-      Nel[dim]--;
-      first[dim]++;
-    }
-    // Edge info along row/column/layer starting at origin
-    ArrayXXPI side1 = RowArrayXPI::LinSpaced(
-                    Nel[dim]+1, (first[dim]-1)*spacing, (last[dim]-1)*spacing);
-    ArrayXXPI side2 = RowArrayXPI::LinSpaced(
-                    Nel[dim]+1, first[dim]*spacing, last[dim]*spacing);
-    // Mesh is divided amongst processors by slices in highest dimension
-    // If at the highest dimension or proc 0, first element is out of domain
-    if (dim < numDims-1 || myid == 0)
-      side1(0) = nElem;
-    // Similarly, if at highest dim or last proc, last element is out of domain
-    if (dim < numDims-1 || myid == nprocs-1)
-      side2(Nel[dim]) = nElem;
-
-    // Shared edges go to higher process
-    if (dim == numDims-1 && myid > 0)
-    {
-      Nel[dim]++;
-      first[dim]--;
-    }
-    // Spacing between this row/column and the adjacent one in otherDim
-    int otherSpacing = 1;
-    for (short otherDim = 0; otherDim < numDims; otherDim++)
-    {
-      // If true, convert matrix to vector (ala (:) in Matlab)
-      if (otherDim == dim)
-      {
-        side1.resize(side1.size(),1);
-        side2.resize(side2.size(),1);
-      }
-      else
-      { // Offset in otherDim direction
-        ArrayXXPI offset = Eigen::KroneckerProduct<RowArrayXPI, ArrayXXPI>
-                (RowArrayXPI::LinSpaced(Nel[otherDim],
-                first[otherDim]*otherSpacing, (last[otherDim]-1)*otherSpacing),
-                ArrayXXPI::Ones(side1.rows(),side1.cols()));
-        side1 = side1.replicate(1,Nel[otherDim]).eval();
-        side2 = side2.replicate(1,Nel[otherDim]).eval();
-        side1 += offset;
-        side2 += offset;
-      }
-      otherSpacing *= Nel[otherDim];
-    }
-    side1.resize(side1.size(),1);
-    side2.resize(side2.size(),1);
-    edgeElem.conservativeResize(numExisting+side1.rows(),2);
-    edgeElem.block(numExisting,0,side1.rows(),1) = side1;
-    edgeElem.block(numExisting,1,side2.rows(),1) = side2;
-    edgeSize.conservativeResize(numExisting+side1.rows());
-    edgeSize.segment(numExisting, side1.rows()) =
-        elemSize(0)/dx[dim]*Eigen::VectorXd::Ones(side1.rows());
-    numExisting = edgeElem.rows();
-  }
-  // Restrict maximum element number to nElem;
-  edgeElem = edgeElem.min(nElem*ArrayXXPI::Ones(edgeElem.rows(),edgeElem.cols()));
-
-  return ierr;
-}
-
-/*****************************************************************/
 /**                  Cut Mesh if necessary                      **/
 /*****************************************************************/
 PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
-                 int padding, int nInterfaceNodes, FilterArrays &filterArrays,
+                 int padding, int nInterfaceNodes,
                  ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels )
 {
   PetscErrorCode ierr = 0;
@@ -758,7 +656,6 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 
   // Share how many are stored locally on this process
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, number.data(), 1, MPI_PETSCINT, comm);
-  PetscInt newnElem = number.sum();
   // Calculate first number on this process (first process starts at 1)
   if (myid > 0)
   {
@@ -881,37 +778,6 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
       }
     } while (!(sR1 && sR2 && rR1 && rR2));
   }
-
-  /// Edit the edge information
-  start = elmdist(myid) - start; // start is now the first element in elemValidity
-  Eigen::Array<bool, -1, 1> edgeValidity(edgeElem.rows());
-  for (int edge = 0; edge < edgeElem.rows(); edge++)
-  {
-    edgeValidity(edge) = false;
-    if (edgeElem(edge,0) == nElem)
-      edgeElem(edge,0) = newnElem;
-    else
-    {
-      edgeElem(edge,0) = newElemNumber(edgeElem(edge,0)-start)-1;
-      if (edgeElem(edge,0) == -1)
-        edgeElem(edge,0) = newnElem;
-      else
-        edgeValidity(edge) = true;
-    }
-
-    if (edgeElem(edge,1) == nElem)
-      edgeElem(edge,1) = newnElem;
-    else
-    {
-      edgeElem(edge,1) = newElemNumber(edgeElem(edge,1)-start)-1;
-      if (edgeElem(edge,1) == -1)
-        edgeElem(edge,1) = newnElem;
-      else
-        edgeValidity(edge) = true;
-    }
-  }
-  EigLab::RemoveSlices(edgeElem, edgeValidity, 1);
-  EigLab::RemoveSlices(edgeSize, edgeValidity, 1);
 
   /// Prepare to check validity of nodes
   // first and last+1 node needed by elements on this process
@@ -1185,20 +1051,6 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 
   /// Remove elements from the filter
   // By row first
-  int ind = 0;
-  for (PetscInt el = 0; el < filterArrays.nElem; el++)
-  {
-    PetscInt elem = filterArrays.elements(el,0)-elmdist(myid);
-    // Overwrite rows that have been removed
-    if ( elemValidity(elem) )
-    {
-      filterArrays.elements.row(ind) << newElemNumber(elem)-1,
-                                        filterArrays.elements(el,1);
-      filterArrays.distances(ind) = filterArrays.distances(el);
-      ind++;
-    }
-  }
-  filterArrays.Truncate(ind);
 
   // Now renumber and remove invalid column elements
   // Loop through all arrays owned by other processes
@@ -1206,36 +1058,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   {
     int activeproc = (proc+myid) % nprocs;
     int ind = 0;
-    // Loop through each row of the filter
-    for (PetscInt row = 0; row < filterArrays.nElem; row++)
-    {
-      PetscInt element = filterArrays.elements(row, 1);
-      // If this column's element hasn't been updated and
-      // was originally created on activeproc
-      if (element >= elmdist(activeproc) &&
-          element < elmdist(activeproc+1) &&
-          !filterArrays.modified(row))
-      {
-        // If that element is invalid, remove that column, otherwise
-        // update the column number
-        if ( newElemNumber(element-elmdist(activeproc)) > 0 )
-        {
-          filterArrays.modified(ind) = true;
-          filterArrays.elements.row(ind) << filterArrays.elements(row,0),
-                          newElemNumber(element-elmdist(activeproc))-1;
-          filterArrays.distances(ind++) = filterArrays.distances(row);
-        }
-      }
-      else
-      {
-        filterArrays.modified(ind) = filterArrays.modified(row);
-        filterArrays.elements.row(ind) = filterArrays.elements.row(row);
-        filterArrays.distances(ind++) = filterArrays.distances(row);
-      }
-
-    }
-    filterArrays.Truncate(ind);
-
+    
     // Share the validity information with the next process
     MPI_Request request = MPI_REQUEST_NULL;
     MPI_Status status;
@@ -1302,10 +1125,13 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 /*****************************************************************/
 /**               Get partitioning with ParMetis                **/
 /*****************************************************************/
-idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
-            idx_t nparts, idx_t ncommonnodes, double *tpwgts, double *ubvec,
-            idx_t *opts, idx_t ncon, idx_t *elmwgt, idx_t wgtflag, idx_t numflag )
+idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
+            idx_t ncommonnodes, double *tpwgts, double *ubvec,
+            idx_t *opts, idx_t ncon, idx_t *elmwgt, idx_t wgtflag,
+            idx_t numflag )
 {
+  PetscErrorCode ierr = 0;
+
   /// ParMetis won't work if some processors have zero elements, so perform
   /// an initial redistribution
   Eigen::Array<idx_t, -1, 1> partition =
@@ -1325,7 +1151,7 @@ idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
                                 checkpoints(i+1) - elmdist(myid)),
                                 elmdist(myid+1) - elmdist(myid)) ).setConstant(i);
   }
-  ElemDist(filterArrays, partition);
+  ElemDist(partition);
 
   /// Verify Inputs
   if (nparts <= 0)
@@ -1373,7 +1199,9 @@ idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
             &ncommonnodes, &nparts, tpwgts, ubvec, opts,
             &edgecut, partition.data(), &comm);
   else
+  {
     partition.setConstant(myid); METIS = METIS_OK;
+  }
   delete[] ubvec;
   delete[] tpwgts;
   delete opts;
@@ -1383,68 +1211,16 @@ idx_t TopOpt::ReorderParMetis(FilterArrays &filterArrays, bool Reorder_Mesh,
     std::cout << "Error partitioning matrix! Error code: " << METIS << "\n";
     return METIS;
   }
-    
-  ArrayXPI permute;
-  ElemDist(filterArrays, partition);
 
-  // TODO: Move filter matrix assembly to its own function
-  PetscErrorCode ierr = 0;
-  /// Assemble the filter matrix
-  ierr = MatCreate(comm, &P); CHKERRQ(ierr);
-  ierr = MatSetSizes(P, nLocElem, nLocElem, nElem, nElem); CHKERRQ(ierr);
-  ierr = MatSetOptionsPrefix(P,"P_"); CHKERRQ(ierr);
-  ierr = MatSetFromOptions(P); CHKERRQ(ierr);
+  ierr = ElemDist(partition); CHKERRQ(ierr);
 
-  // Set preallocation
-  ArrayXPI onDiag = ArrayXPI::Zero(nLocElem);
-  ArrayXPI offDiag = ArrayXPI::Zero(nLocElem);
-  for (int el = 0; el < filterArrays.nElem; el++)
-  {
-    if (filterArrays.elements(el,1) >= elmdist(myid) &&
-        filterArrays.elements(el,1) < elmdist(myid+1) )
-    {
-      onDiag(filterArrays.elements(el,0)-elmdist(myid))++;
-    }
-    else
-    {
-      offDiag(filterArrays.elements(el,0)-elmdist(myid))++;
-    }
-  }
-
-  // Set the preallocation
-  ierr = MatXAIJSetPreallocation(P, 1, onDiag.data(), offDiag.data(), 0, 0); CHKERRQ(ierr);
-
-  // Insert values into matrix
-  for (int el = 0; el < filterArrays.nElem; el++)
-  {
-    ierr = MatSetValue(P, filterArrays.elements(el,0), filterArrays.elements(el,1),
-                filterArrays.distances(el), ADD_VALUES); CHKERRQ(ierr);
-  }
-
-  // Begin assembly (finish just before returning from function)
-  MatAssemblyBegin(P, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-
-  // Finish assembly of the matrix before continuing
-  MatAssemblyEnd(P, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  // Scale Rows
-  Vec rowSum, Ones;
-  ierr = VecCreateMPI(comm, nLocElem, nElem, &rowSum); CHKERRQ(ierr);
-  ierr = VecDuplicate(rowSum, &Ones); CHKERRQ(ierr);
-  ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
-  ierr = MatGetRowSum(P, rowSum); CHKERRQ(ierr);
-  ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
-  ierr = MatDiagonalScale(P, rowSum, NULL); CHKERRQ(ierr);
-  ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
-  ierr = VecDestroy(&Ones); CHKERRQ(ierr);
-
-  return 0;
+  return ierr;
 }
 
 /*****************************************************************/
 /**                    Redistribute elements                    **/
 /*****************************************************************/
-PetscErrorCode TopOpt::ElemDist(FilterArrays &filterArrays,
-                      Eigen::Array<idx_t, -1, 1> &partition)
+PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition)
 {
     PetscErrorCode ierr = 0;
     /// Reallocate elements
@@ -1504,138 +1280,59 @@ PetscErrorCode TopOpt::ElemDist(FilterArrays &filterArrays,
     // Permute = permutation vector, permute(i) = newi
     // Indices = vector indicating where this process can start assigning Elements
     //            on each process (i.e. global locations in the permute vector)
-    ArrayXPI permute = ArrayXPI::Zero(nElem);
+    ArrayXPI permute = ArrayXPI::Zero(partition.size());
     ArrayXPI indices = ArrayXPI::Zero(nprocs);
     indices.segment(1,nprocs-1) = transferSize.block(0, 0, nprocs-1, nprocs)
                                   .rowwise().sum();
     partial_sum(indices.data(), indices.data()+nprocs, indices.data());
     indices += transferSize.block(0, 0, nprocs, myid).rowwise().sum();
-    int permuteStart = transferSize.block(0, 0, nprocs, myid).sum();
     for (PetscInt i = 0; i < partition.rows(); i++)
     {
-      permute(where(i)+permuteStart) = indices(partition(i))++;
+      permute(where(i)) = indices(partition(i))++;
     }
-    MPI_Allreduce(MPI_IN_PLACE, permute.data(), nElem, MPI_PETSCINT, MPI_SUM, comm);
 
-    /// Apply permutations to edge information
-    for (int edge = 0; edge < edgeElem.rows(); edge++)
+    Mat Perm_Mat;
+    ierr = MatCreate(this->comm, &Perm_Mat); CHKERRQ(ierr);
+    PetscInt oldSize;
+    ierr = MatGetLocalSize(this->P, &oldSize, NULL);
+    ierr = MatSetSizes(Perm_Mat, oldSize, this->nLocElem,
+                       this->nElem, this->nElem); CHKERRQ(ierr);
+    ierr = MatSetOptionsPrefix(Perm_Mat, "Permute"); CHKERRQ(ierr);
+    ierr = MatSetFromOptions(Perm_Mat); CHKERRQ(ierr);
+
+    ArrayXPI onDiag = ArrayXPI::Constant(partition.size(), 2);
+    ArrayXPI offDiag = ArrayXPI::Constant(partition.size(), 2);
+    ierr = MatXAIJSetPreallocation(Perm_Mat, 1, onDiag.data(),
+                                   offDiag.data(), 0, 0); CHKERRQ(ierr);
+
+    // Set values of permutation matrix
+    PetscInt firstRow;
+    ierr = MatGetOwnershipRange(this->P, &firstRow, NULL); CHKERRQ(ierr);
+    for (int el = 0; el < partition.size(); el++)
     {
-      if (edgeElem(edge,0) < nElem)
-        edgeElem(edge,0) = permute(edgeElem(edge,0));
-      if (edgeElem(edge,1) < nElem)
-        edgeElem(edge,1) = permute(edgeElem(edge,1));
-      // Arrange so largest actual element is first
-      if ( (edgeElem(edge,0) < edgeElem(edge,1) && edgeElem(edge,1) < nElem) ||
-            edgeElem(edge,0) == nElem )
-      {
-        PetscInt temp = edgeElem(edge,0);
-        edgeElem(edge,0) = edgeElem(edge,1);
-        edgeElem(edge,1) = temp;
-      }
+      ierr = MatSetValue(Perm_Mat, el+firstRow, permute(el), 1, ADD_VALUES); CHKERRQ(ierr);
     }
-    // sort edges by element numbers for redistribution
-    where = EigLab::sort(edgeElem, 1).cast<PetscInt>();
-    // reorder sizes as well
-    Eigen::ArrayXd copyDouble = edgeSize;
-    for (int i = 0; i < edgeSize.rows(); i++)
-    {
-      edgeSize(i) = copyDouble(where(i));
-    }
+    ierr = MatAssemblyBegin(Perm_Mat, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+    ierr = MatAssemblyEnd(Perm_Mat, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
-    /// Apply permutations to filter information
-    for (int el = 0; el < filterArrays.nElem; el++)
-    {
-      if (filterArrays.elements(el,0) < nElem)
-        filterArrays.elements(el,0) = permute(filterArrays.elements(el,0));
-      if (filterArrays.elements(el,1) < nElem)
-        filterArrays.elements(el,1) = permute(filterArrays.elements(el,1));
-    }
-    // sort filter elements for redistribution
-    where = EigLab::sort(filterArrays.elements, 1).cast<PetscInt>();
-    // reorder distances as well
-    copyDouble = filterArrays.distances;
-    for (int i = 0; i < filterArrays.nElem; i++)
-    {
-      filterArrays.distances(i) = copyDouble(where(i));
-    }
+    // Permute Filter matrices
+    Mat tempMat;
+    ierr = MatPtAP(this->P, Perm_Mat, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
+    ierr = MatDestroy(&this->P); CHKERRQ(ierr);
+    this->P = tempMat;
+    tempMat = NULL;
+    ierr = MatPtAP(this->R, Perm_Mat, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
+    ierr = MatDestroy(&this->R); CHKERRQ(ierr);
+    this->R = tempMat;
 
-    /// Redistribute edges
-    transferSize.setZero();
-    for (int edge = 0; edge < edgeElem.rows(); edge++)
-    {
-      int location = (elmdist <= edgeElem(edge,0)).cast<int>().sum() - 1;
-      transferSize(location, myid)++;
-    }
+    Vec tempVec;
+    ierr = MatCreateVecs(Perm_Mat, &tempVec, NULL); CHKERRQ(ierr);
+    ierr = MatMultTranspose(Perm_Mat, this->REdge, tempVec); CHKERRQ(ierr);
+    ierr = VecDestroy(&this->REdge); CHKERRQ(ierr);
+    this->REdge = tempVec;
 
-    // How many elements are transferred between each pair of processes
-    MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
-                  nprocs, MPI_PETSCINT, comm);
-    sendcnt = 2*transferSize.col(myid).cast<int>();
-    recvcnt = 2*transferSize.row(myid).cast<int>();
+    ierr = MatDestroy(&Perm_Mat); CHKERRQ(ierr);
 
-    // Offsets in sent messages
-    senddsp.setZero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        senddsp(i) = sendcnt(i-1) + senddsp(i-1);
-
-    // Offsets in received messages
-    recvdsp.setZero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
-
-    // The edge element transfer
-    elmcpy = edgeElem;
-    edgeElem.resize(recvcnt.sum()/2, 2);
-    MPI_Alltoallv(elmcpy.data(), sendcnt.data(), senddsp.data(),
-                  MPI_PETSCINT, edgeElem.data(), recvcnt.data(),
-                  recvdsp.data(), MPI_PETSCINT, comm);
-
-    // The size transfer
-    sendcnt /= 2; senddsp /= 2;
-    recvcnt /= 2; recvdsp /= 2;
-    copyDouble = edgeSize;
-    edgeSize.resize(recvcnt.sum());
-    MPI_Alltoallv(copyDouble.data(), sendcnt.data(), senddsp.data(),
-                  MPI_DOUBLE, edgeSize.data(), recvcnt.data(),
-                  recvdsp.data(), MPI_DOUBLE, comm);
-
-    /// Reallocate filter information
-    transferSize.setZero();
-    for (int filter = 0; filter < filterArrays.nElem; filter++)
-    {
-      int location = (elmdist <= filterArrays.elements(filter,0)).cast<int>().sum() - 1;
-      transferSize(location, myid)++;
-    }
-
-    // How many elements are transferred between each pair of processes
-    MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
-                  nprocs, MPI_PETSCINT, comm);
-    sendcnt = 2*transferSize.col(myid).cast<int>();
-    recvcnt = 2*transferSize.row(myid).cast<int>();
-
-    // Offsets in sent messages
-    senddsp.setZero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        senddsp(i) = sendcnt(i-1) + senddsp(i-1);
-
-    // Offsets in received messages
-    recvdsp.setZero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
-
-    // The actual transfer
-    elmcpy = filterArrays.elements;
-    copyDouble = filterArrays.distances;
-    filterArrays.Reset(recvcnt.sum()/2);
-    MPI_Alltoallv(elmcpy.data(), sendcnt.data(), senddsp.data(),
-                  MPI_PETSCINT, filterArrays.elements.data(), recvcnt.data(),
-                  recvdsp.data(), MPI_PETSCINT, comm);
-
-    sendcnt /= 2; senddsp /= 2;
-    recvcnt /= 2; recvdsp /= 2;
-    MPI_Alltoallv(copyDouble.data(), sendcnt.data(), senddsp.data(),
-                  MPI_DOUBLE, filterArrays.distances.data(), recvcnt.data(),
-                  recvdsp.data(), MPI_DOUBLE, comm);
     return ierr;
 }
 
@@ -1934,14 +1631,16 @@ PetscErrorCode TopOpt::Initialize_Vectors()
                           gElem.data()+nLocElem, &V); CHKERRQ(ierr);
     ierr = VecDuplicate(V, &E); CHKERRQ(ierr);
     ierr = VecDuplicate(V, &Es); CHKERRQ(ierr);
-    ierr = VecDuplicate(V, &dVdy); CHKERRQ(ierr);
-    ierr = VecDuplicate(V, &dEdy); CHKERRQ(ierr);
-    ierr = VecDuplicate(V, &dEsdy); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dVdrho); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dEdz); CHKERRQ(ierr);
+    ierr = VecDuplicate(V, &dEsdz); CHKERRQ(ierr);
 
     /// Create design variable and density vectors to work with the filter
     ierr = VecCreateMPI(comm, nLocElem, nElem, &x); CHKERRQ(ierr);
     // V is usually the same as rho, but this allows for interpolation of rho to V
     ierr = VecDuplicate(x, &rho); CHKERRQ(ierr);
+    ierr = VecDuplicate(x, &rhoq); CHKERRQ(ierr);
+    ierr = VecDuplicate(x, &y); CHKERRQ(ierr);
 
     return ierr;
 }
@@ -1963,18 +1662,6 @@ PetscErrorCode TopOpt::Localize()
 
     /// Convert elements to local node numbers
     start = gElem.data()+nLocElem; finish = gElem.data()+gElem.size();
-    for (PetscInt i = 0; i < edgeElem.rows(); i++)
-    {
-      // Renumber first element
-      edgeElem(i,0) -= elmdist(myid);
-      // Check if second element is local or not and act accordingly
-      if (edgeElem(i,1) == nElem)
-        edgeElem(i,1) = gElem.rows();
-      else if (edgeElem(i,1) >= elmdist(myid))
-        edgeElem(i,1) -= elmdist(myid);
-      else
-        edgeElem(i,1) = std::find(start, finish, edgeElem(i,1)) - gElem.data();
-    }
 
     return ierr;
 }

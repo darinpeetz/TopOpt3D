@@ -55,14 +55,18 @@ PetscErrorCode TopOpt::Clear()
   //ierr = KSPDestroy(&dynamicKSP); CHKERRQ(ierr);
   //ierr = KSPDestroy(&bucklingKSP); CHKERRQ(ierr);
   ierr = MatDestroy(&P); CHKERRQ(ierr);
+  ierr = MatDestroy(&R); CHKERRQ(ierr);
+  ierr = VecDestroy(&REdge); CHKERRQ(ierr);
   ierr = VecDestroy(&V); CHKERRQ(ierr);
-  ierr = VecDestroy(&dVdy); CHKERRQ(ierr);
+  ierr = VecDestroy(&dVdrho); CHKERRQ(ierr);
   ierr = VecDestroy(&E); CHKERRQ(ierr);
-  ierr = VecDestroy(&dEdy); CHKERRQ(ierr);
+  ierr = VecDestroy(&dEdz); CHKERRQ(ierr);
   ierr = VecDestroy(&Es); CHKERRQ(ierr);
-  ierr = VecDestroy(&dEsdy); CHKERRQ(ierr);
+  ierr = VecDestroy(&dEsdz); CHKERRQ(ierr);
   ierr = VecDestroy(&x); CHKERRQ(ierr);
+  ierr = VecDestroy(&y); CHKERRQ(ierr);
   ierr = VecDestroy(&rho); CHKERRQ(ierr);
+  ierr = VecDestroy(&rhoq); CHKERRQ(ierr);
   for (unsigned int i = 0; i < function_list.size(); i++)
     delete function_list[i];
   ierr = PetscFClose(comm, output); CHKERRQ(ierr);
@@ -86,13 +90,10 @@ PetscErrorCode TopOpt::MeshOut()
     file.close();
   }
 
-  // Getting distribution of edges, loads, supports, springs, and masses
-  int edgedist = this->edgeElem.rows(), loaddist = this->loadNode.rows();
-  int suppdist = this->suppNode.rows(), springdist = this->springNode.rows();
-  int massdist = this->massNode.rows();
-  MPI_Request edgereq, loadreq, suppreq, springreq, massreq;
-  ierr = MPI_Iscan(MPI_IN_PLACE, &edgedist, 1, MPI_INT, MPI_SUM, this->comm,
-            &edgereq); CHKERRQ(ierr);
+  // Getting distribution of loads, supports, springs, and masses
+  int loaddist = this->loadNode.rows(), suppdist = this->suppNode.rows();
+  int springdist = this->springNode.rows(), massdist = this->massNode.rows();
+  MPI_Request loadreq, suppreq, springreq, massreq;
   ierr = MPI_Iscan(MPI_IN_PLACE, &loaddist, 1, MPI_INT, MPI_SUM, this->comm,
             &loadreq); CHKERRQ(ierr);
   ierr = MPI_Iscan(MPI_IN_PLACE, &suppdist, 1, MPI_INT, MPI_SUM, this->comm,
@@ -136,42 +137,6 @@ PetscErrorCode TopOpt::MeshOut()
                        sizeof(double), MPI_SEEK_SET); CHKERRQ(ierr);
   ierr = MPI_File_write_all(fh, this->node.data(), this->nLocNode *
              this->node.cols(), MPI_DOUBLE, MPI_STATUS_IGNORE); CHKERRQ(ierr);
-  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
-
-  // Writing edge array
-  ierr = MPI_File_open(this->comm, "edges.bin", MPI_MODE_CREATE |
-             MPI_MODE_WRONLY | MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
-          CHKERRQ(ierr);
-  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
-  ierr = MPI_File_open(this->comm, "edges.bin", MPI_MODE_CREATE |
-                       MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
-  ierr = MPI_Wait(&edgereq, MPI_STATUS_IGNORE); CHKERRQ(ierr);
-  edgedist -= this->edgeElem.rows();
-  ierr = MPI_File_seek(fh, 2*edgedist*sizeof(PetscInt), MPI_SEEK_SET); CHKERRQ(ierr);
-  global_int.resize(this->edgeElem.rows(), 2);
-  for (int el = 0; el < this->edgeElem.rows(); el++)
-  {
-    global_int(el, 0) = this->gElem(this->edgeElem(el,0));
-    if (this->edgeElem(el,1) < this->gElem.size())
-
-      global_int(el, 1) = this->gElem(this->edgeElem(el,1));
-    else
-      global_int(el, 1) = this->nElem;
-  }
-  ierr = MPI_File_write_all(fh, global_int.data(), global_int.size(),
-                            MPI_PETSCINT, MPI_STATUS_IGNORE); CHKERRQ(ierr);
-  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
-
-  // Writing edge length array
-  ierr = MPI_File_open(this->comm, "edgeLengths.bin", MPI_MODE_CREATE |
-             MPI_MODE_WRONLY | MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
-         CHKERRQ(ierr);
-  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
-  ierr = MPI_File_open(this->comm, "edgeLengths.bin", MPI_MODE_CREATE |
-                       MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
-  ierr = MPI_File_seek(fh, edgedist*sizeof(double), MPI_SEEK_SET); CHKERRQ(ierr);
-  ierr = MPI_File_write_all(fh, this->edgeSize.data(), this->edgeSize.size(),
-                            MPI_DOUBLE, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
 
   // Writing load node array
@@ -298,6 +263,16 @@ PetscErrorCode TopOpt::MeshOut()
   PetscViewer view;
   ierr = PetscViewerBinaryOpen(this->comm, "Filter.bin", FILE_MODE_WRITE, &view); CHKERRQ(ierr);
   ierr = MatView(this->P, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+
+  // Writing max length scale filter
+  ierr = PetscViewerBinaryOpen(this->comm, "Max_Filter.bin",
+                               FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+  ierr = MatView(this->R, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+  ierr = PetscViewerBinaryOpen(this->comm, "Void_Edge_Volume.bin",
+                               FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+  ierr = VecView(this->REdge, view); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
   // Writing projecting matrices

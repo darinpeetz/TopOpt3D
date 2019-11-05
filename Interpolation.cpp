@@ -178,7 +178,8 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
     // Create communicators for each level of hierarchy
     PetscInt nprocs = std::max(gCols/min_size,1);
     if (this->verbose >= 2)
-      ierr = PetscPrintf(comm, "Level %i is split over %i processors\n", i, nprocs); CHKERRQ(ierr);
+      ierr = PetscPrintf(comm, "Level %i is split over %i processors\n", i,
+                         min(this->nprocs, nprocs)); CHKERRQ(ierr);
     if (i == mg_levels-2)
       MPI_Comm_split(this->comm, myid == 0 ? 0 : MPI_UNDEFINED, 0, this->MG_comms.data()+i+1);
     if (nprocs < this->nprocs)

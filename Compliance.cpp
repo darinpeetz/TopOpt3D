@@ -15,12 +15,12 @@ PetscErrorCode Compliance::Function( TopOpt *topOpt )
 
   // Sensitivities
   Vec dCdy;
-  ierr = VecDuplicate( topOpt->dEdy, &dCdy ); CHKERRQ(ierr);
+  ierr = VecDuplicate( topOpt->dEdz, &dCdy ); CHKERRQ(ierr);
   ierr = VecPlaceArray( dCdy, gradients.data() ); CHKERRQ(ierr);
 
-  const PetscScalar *p_U, *p_dEdy;
+  const PetscScalar *p_U, *p_dEdz;
   ierr = VecGetArrayRead( topOpt->U, &p_U ); CHKERRQ(ierr);
-  ierr = VecGetArrayRead( topOpt->dEdy, &p_dEdy ); CHKERRQ(ierr);
+  ierr = VecGetArrayRead( topOpt->dEdz, &p_dEdz ); CHKERRQ(ierr);
   // dCdrhof
   short DN = topOpt->numDims;
   short NE = pow(2, topOpt->numDims);
@@ -32,15 +32,15 @@ PetscErrorCode Compliance::Function( TopOpt *topOpt )
       U_loc(DN*j+i) = p_U[DN * topOpt->element(el, j) + i]; } }
 
     if (topOpt->regular)
-      gradients(el,0) = -p_dEdy[el] * U_loc.dot(topOpt->ke[0]  * U_loc);
+      gradients(el,0) = -p_dEdz[el] * U_loc.dot(topOpt->ke[0]  * U_loc);
     else
-      gradients(el,0) = -p_dEdy[el] * U_loc.dot(topOpt->ke[el] * U_loc);
+      gradients(el,0) = -p_dEdz[el] * U_loc.dot(topOpt->ke[el] * U_loc);
   }
   ierr = VecRestoreArrayRead( topOpt->U, &p_U ); CHKERRQ(ierr);
-  ierr = VecRestoreArrayRead( topOpt->dEdy, &p_dEdy ); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead( topOpt->dEdz, &p_dEdz ); CHKERRQ(ierr);
 
   // dCdrhof*drhofdrho
-  ierr = Chain_Filter( topOpt->P, dCdy); CHKERRQ(ierr);
+  ierr = topOpt->Chain_Filter( NULL, dCdy ); CHKERRQ(ierr);
 
   ierr = VecResetArray( dCdy ); CHKERRQ(ierr);
   ierr = VecDestroy( &dCdy ); CHKERRQ(ierr);

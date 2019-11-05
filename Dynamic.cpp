@@ -128,14 +128,14 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   }
 
   /// Construct sensitivity of material stiffness matrix
-  const PetscScalar *p_dEdy;
-  ierr = VecGetArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
-  Eigen::Map< const Eigen::VectorXd > dEdy(p_dEdy, topOpt->nLocElem);
+  const PetscScalar *p_dEdz;
+  ierr = VecGetArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
+  Eigen::Map< const Eigen::VectorXd > dEdz(p_dEdz, topOpt->nLocElem);
   MatrixXPS dKdy;
   if (topOpt->regular)
   {
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    dKdy = Eigen::kroneckerProduct(dEdy, ke);
+    dKdy = Eigen::kroneckerProduct(dEdz, ke);
   }
   else
   {
@@ -149,10 +149,10 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
     for (unsigned int el = 0; el < topOpt->ke.size(); el++)
     {
     new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
-    dKdy.block(ind, 0, ke.size(), 1) = dEdy(el)*ke;
+    dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
     }
   }
-  ierr = VecRestoreArrayRead(topOpt->dEdy, &p_dEdy); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
   MatrixXPS df = MatrixXPS::Zero((DE*DE)*topOpt->nLocElem,nvals);
@@ -167,11 +167,11 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
 
   /// dCdrhof*drhofdrho
   Vec dlamdy;
-  ierr = VecDuplicate( topOpt->dEdy, &dlamdy ); CHKERRQ(ierr);
+  ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
   for (short i = 0; i < nvals; i++)
   {
     ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
-    ierr = Chain_Filter( topOpt->P, dlamdy ); CHKERRQ(ierr);
+    ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
     ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
   }
   ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
@@ -196,9 +196,9 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
   long dMmarker = 0;
 
   // Get pointers to Petsc vectors
-  const PetscScalar *p_V, *p_dVdy;
+  const PetscScalar *p_V, *p_dVdrho;
   ierr = VecGetArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
-  ierr = VecGetArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
+  ierr = VecGetArrayRead(topOpt->dVdrho, &p_dVdrho); CHKERRQ(ierr);
 
   MatrixPS mMat = 1.0/pow(2,topOpt->numDims)/topOpt->numDims*
       topOpt->elemSize(0)*topOpt->density*MatrixXPS::Identity(DE, DE);
@@ -217,7 +217,7 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
     /// Fill in the sensitivity dMdy
     if (el < topOpt->nLocElem)
     {
-    dMdy.segment(dMmarker, mVec.size()) = p_dVdy[el] * mVec;
+    dMdy.segment(dMmarker, mVec.size()) = p_dVdrho[el] * mVec;
     dMmarker += mVec.size();
     }
 
@@ -237,7 +237,7 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
 
   ierr = MatAssemblyBegin(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = VecRestoreArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
-  ierr = VecRestoreArrayRead(topOpt->dVdy, &p_dVdy); CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(topOpt->dVdrho, &p_dVdrho); CHKERRQ(ierr);
   ierr = MatAssemblyEnd(M, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
   ierr = MatDiagonalSet(M, topOpt->MLump, ADD_VALUES); CHKERRQ(ierr);
 

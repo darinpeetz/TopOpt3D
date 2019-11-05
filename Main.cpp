@@ -38,11 +38,11 @@ int main(int argc, char **args)
 
     Eigen::VectorXd Dimensions;
     ArrayXPI Nel;
-    double R;
+    double Rmin=1.5, Rmax=3;
 
     bool Normalization = false, Reorder_Mesh = true;
     PetscInt mg_levels = 2, min_size = -1;
-    ierr = topOpt->Def_Param(optmma, Dimensions, Nel, R, Normalization,
+    ierr = topOpt->Def_Param(optmma, Dimensions, Nel, Rmin, Rmax, Normalization,
                       Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
     mg_levels = std::max(mg_levels, 2);
     ierr = topOpt->Set_Funcs(); CHKERRQ(ierr);
@@ -50,17 +50,20 @@ int main(int argc, char **args)
 
     /// Domain, Boundary Conditions, and initial design variables
     Eigen::VectorXd xIni;
+    int pind = 0;
     if (topOpt->folder.length() > 0)
     {
       ierr = topOpt->LoadMesh(xIni); CHKERRQ(ierr);
+      while (pind < (int)topOpt->penalties.size() &&
+             topOpt->penalties[pind] < topOpt->penal)
+        pind++;
     }
     else
     {
-      ierr = topOpt->CreateMesh(Dimensions, Nel, R, Reorder_Mesh, 
+      ierr = topOpt->CreateMesh(Dimensions, Nel, Rmin, Rmax, Reorder_Mesh, 
                                 mg_levels, min_size); CHKERRQ(ierr);
       topOpt->Def_BC();
       xIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
-      topOpt->penal = topOpt->pmin;
     }
 
     // Write out the mesh to file
@@ -91,8 +94,22 @@ int main(int argc, char **args)
       ierr = topOpt->function_list[i]->Initialize_Arrays(topOpt->nLocElem); CHKERRQ(ierr); }
 
     /// Optimize
-    for ( ; topOpt->penal <= topOpt->pmax; topOpt->penal += topOpt->pstep )
+    if (topOpt->void_penalties.size() == 1)
     {
+      topOpt->void_penalties.resize(topOpt->penalties.size());
+      PetscScalar val = topOpt->void_penalties[0];
+      std::fill(topOpt->void_penalties.begin(),
+                topOpt->void_penalties.end(), val);
+    }
+    if (topOpt->penalties.size() != topOpt->void_penalties.size())
+    {
+      SETERRQ(topOpt->comm, PETSC_ERR_ARG_SIZ,
+              "Different number of penalties for stiffness and excessive feature size");
+    }
+    for (; (unsigned int)pind < topOpt->penalties.size(); pind++)
+    {
+      topOpt->penal = topOpt->penalties[pind];
+      topOpt->vdPenal = topOpt->void_penalties[pind];
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\nPenalty increased to %1.3g\n",
                   topOpt->penal); CHKERRQ(ierr);
 

@@ -5,6 +5,7 @@
     Nu0: 0.3
     Density: 1900
     Penalty: 1, 0.5, 4
+    Material: SIMP_CUT 0.1
 
     Min_Iterations: 5
     Max_Iterations: 30
@@ -13,8 +14,13 @@
     Step_Limit: 0.05
 
     RFactor: 1.5
+    RMaxFactor: 6
+    Void_Penalty: 1, 0.25, 4
+    Void_Minimum: 5
+
     MG_Coarse_Size 100
     MG_Levels 4
+    Smoother: WJAC
 
 [/Params]
 [Domain]
@@ -27,10 +33,6 @@
   Volume
     Constraint
     Values: 0.5
-    Range: 0, 1
-  Perimeter
-    Objective
-    Values: 0.25
     Range: 0, 1
   Stability
     Objective

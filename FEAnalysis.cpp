@@ -385,7 +385,7 @@ int TopOpt::FESolve( )
 
   ierr = VecGhostUpdateBegin(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
   ierr = VecGhostUpdateEnd(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
+  
   return 0;
 }
 

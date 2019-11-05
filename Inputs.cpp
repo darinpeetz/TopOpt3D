@@ -104,7 +104,7 @@ PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
 /**       Set various parameters/options from input file       **/
 /****************************************************************/
 PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
-               ArrayXPI &Nel, double &R, bool &Normalization,
+               ArrayXPI &Nel, double &Rmin, double &Rmax, bool &Normalization,
                bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
 {
   PetscErrorCode ierr = 0;
@@ -187,11 +187,31 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       else if (!line.compare(0,7,"PENALTY"))
       {
         file >> line;
-        pmin = strtod(line.c_str(), NULL);
+        PetscScalar pmin = strtod(line.c_str(), NULL);
         file >> line;
-        pstep = strtod(line.c_str(), NULL);
+        PetscScalar pstep = strtod(line.c_str(), NULL);
         file >> line;
-        pmax = strtod(line.c_str(), NULL);
+        PetscScalar pmax = strtod(line.c_str(), NULL);
+        this->penalties.reserve(int((pmax-pmin)/pstep));
+        for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
+          this->penalties.push_back(p);
+      }
+      else if (!line.compare(0,12,"VOID_PENALTY"))
+      {
+        file >> line;
+        PetscScalar pmin = strtod(line.c_str(), NULL);
+        file >> line;
+        PetscScalar pstep = strtod(line.c_str(), NULL);
+        file >> line;
+        PetscScalar pmax = strtod(line.c_str(), NULL);
+        if (pmax == pmin || pstep == 0)
+          this->void_penalties.push_back(pmin);
+        else
+        {
+          this->void_penalties.reserve(int((pmax-pmin)/pstep));
+          for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
+            this->void_penalties.push_back(p);
+        }
       }
       else if (!line.compare(0,5,"MATER") || !line.compare(0,6,"INTERP"))
       {
@@ -216,23 +236,34 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
             if (interp_param.size() != 2) {
             SETERRQ(comm, PETSC_ERR_ARG_WRONG, "SIMP_LOGISTIC needs 2 parameters");}
             interpolation = SIMP_LOGISTIC; }
-          else if (!line.compare(5,6,"SMOOTH")) {
-            if (interp_param.size() != 2) {
-              SETERRQ(comm, PETSC_ERR_ARG_WRONG, "SIMP_SMOOTH needs 2 parameters");}
-            interpolation = SIMP_SMOOTH; }
           else {
             interpolation = SIMP; }
         }
       }
-      else if (!line.compare(0,7,"RFACTOR"))
+      else if (!line.compare(0,10,"RMINFACTOR"))
       {
         file >> line;
-        R = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
+        Rmin = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
       }
-      else if (!line.compare(0,1,"R"))
+      else if (!line.compare(0,4,"RMIN"))
       {
         file >> line;
-        R = strtod(line.c_str(), NULL);
+        Rmin = strtod(line.c_str(), NULL);
+      }
+      else if (!line.compare(0,10,"RMAXFACTOR"))
+      {
+        file >> line;
+        Rmax = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
+      }
+      else if (!line.compare(0,4,"RMAX"))
+      {
+        file >> line;
+        Rmax = strtod(line.c_str(), NULL);
+      }
+      else if (!line.compare(0,12,"VOID_MINIMUM"))
+      {
+        file >> line;
+        this->vdMin = strtod(line.c_str(), NULL);
       }
       else if (!line.compare(0,14,"MIN_ITERATIONS"))
       {
@@ -373,8 +404,6 @@ PetscErrorCode TopOpt::Set_Funcs()
       }
       else if (!line.compare(0,10,"Compliance"))
         func = COMPLIANCE;
-      else if (!line.compare(0,9,"Perimeter"))
-        func = PERIMETER;
       else if (!line.compare(0,6,"Volume"))
         func = VOLUME;
       else if (!line.compare(0,9,"Stability"))
@@ -444,9 +473,6 @@ PetscErrorCode TopOpt::Set_Funcs()
         case COMPLIANCE :
           function_list.push_back(new Compliance(values, min, max, objective));
           needK = PETSC_TRUE; needU = PETSC_TRUE;
-          break;
-        case PERIMETER :
-          function_list.push_back(new Perimeter(values, min, max, objective));
           break;
         case VOLUME :
           function_list.push_back(new Volume(values, min, max, objective));

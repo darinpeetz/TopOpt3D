@@ -2,7 +2,7 @@
 #include "TopOpt.h"
 
 using namespace std;
-const char *Function_Base::name[] = {"Compliance", "Perimeter", "Volume", "Stability", "Frequency"};
+const char *Function_Base::name[] = {"Compliance", "Volume", "Stability", "Frequency"};
 
 /******************************************************************************/
 /**                       Function_Base constructor                          **/
@@ -111,11 +111,6 @@ PetscErrorCode Function_Base::Normalization(TopOpt *topOpt)
   ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\tCompliance:\t%1.16g\n",
              function->values(0)); CHKERRQ(ierr);
   delete function;
-  function = new Perimeter(values, min, max, objective, gradient);
-  ierr = function->Function(topOpt); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\tPerimeter:\t%1.16g\n",
-             function->values(0)); CHKERRQ(ierr);
-  delete function;
   function = new Volume(values, min, max, objective, gradient);
   ierr = function->Function(topOpt); CHKERRQ(ierr);
   ierr = PetscFPrintf(topOpt->comm, topOpt->output, "\tVolume:\t%1.16g\n",
@@ -133,20 +128,4 @@ PetscErrorCode Function_Base::Normalization(TopOpt *topOpt)
   delete function;
 
   return ierr;
-}
- 
-/******************************************************************************/
-/**                       Apply filter for chain rule                        **/
-/******************************************************************************/
-PetscErrorCode Function_Base::Chain_Filter(Mat P, Vec x)
-{
-  PetscErrorCode ierr = 0;
-
-  Vec temp;
-  ierr = VecDuplicate(x, &temp); CHKERRQ(ierr);
-  ierr = MatMultTranspose(P, x, temp); CHKERRQ(ierr);
-  ierr = VecCopy(temp, x); CHKERRQ(ierr);
-  ierr = VecDestroy(&temp); CHKERRQ(ierr);
-
-  return 0;
 }

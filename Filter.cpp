@@ -8,10 +8,24 @@ using namespace std;
 typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
 typedef Eigen::Array<PetscInt, -1, 1> ArrayXPI;
 
-/// This method produces a density filter on regular, rectangular grids
-void TopOpt::RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
-                         ArrayXPI Nel, FilterArrays &filterArrays )
+/********************************************************************
+ *  This method produces a density filter on regular, rectangular grids
+ * 
+ * @param first: first element in each dimension on this process
+ * @param last: last element in each dimension on this process
+ * @param dx: element spacing in each dimension
+ * @param R: Filter radius
+ * @param nel: Number of elements in each dimension
+ * @param Filter: The Mat object to be used as the filter matrix
+ * 
+ * @return ierr: PetscErrorCode
+ *******************************************************************/
+PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
+                                   double *dx, double R, ArrayXPI Nel,
+                                   Mat &Filter, PetscScalar nonzeros )
 {
+  PetscErrorCode ierr = 0;
+
   // Number of elements in either direction within radius (not including)
   // the element at the center
   short N[3] = {0, 0, 0};
@@ -23,11 +37,11 @@ void TopOpt::RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
   }
 
   // Distances of all neighborhood elements
-  double *dist = new double[(2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1)];
+  Eigen::ArrayXd dist((2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1));
   // Indicator if the elements are within radius R
-  bool *nbrhd = new bool[(2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1)];
+  Eigen::Array<bool, -1, 1> nbrhd((2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1));
   // Element number template for adding elements to array
-  int *elemTemplate = new int[(2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1)];
+  ArrayXPI elemTemplate((2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1));
   for (int k = -N[2]; k < N[2]+1; k++)
   {
     for (int j = -N[1]; j < N[1]+1; j++)
@@ -43,8 +57,10 @@ void TopOpt::RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
   }
 
   // Arrays of connected elements and their distances
-  filterArrays.Reset(nLocElem*nNbrhd);
   int filterInd = 0;
+  Eigen::Array<PetscInt, -1, 1> I(nLocElem*nNbrhd);
+  Eigen::Array<PetscInt, -1, 1> J(nLocElem*nNbrhd);
+  Eigen::Array<PetscScalar, -1, 1> K(nLocElem*nNbrhd);
   // First three loops are over local elements
   for (int elk = first[2]; elk < last[2]; elk++)
   {
@@ -68,8 +84,12 @@ void TopOpt::RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
               if (valid)
               {
                 // Add that element to list
-                filterArrays.elements.row(filterInd) << el, elemTemplate[ind]+el;
-                filterArrays.distances(filterInd) = 1-dist[ind]/R;
+                I(filterInd) = el;
+                J(filterInd) = elemTemplate[ind]+el;
+                if (nonzeros)
+                  K(filterInd) = nonzeros;
+                else
+                  K(filterInd) = 1-dist[ind]/R;
                 filterInd++;
               }
             }
@@ -79,10 +99,59 @@ void TopOpt::RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
       }
     }
   }
-  filterArrays.Truncate(filterInd);
-  delete[] dist;
-  delete[] nbrhd;
-  delete[] elemTemplate;
+  I.conservativeResize(filterInd);
+  J.conservativeResize(filterInd);
+  K.conservativeResize(filterInd);
 
-  return;
+  /// Assemble the filter matrix
+  ierr = MatCreate(comm, &Filter); CHKERRQ(ierr);
+  ierr = MatSetSizes(Filter, this->nLocElem, this->nLocElem,
+                     this->nElem, this->nElem); CHKERRQ(ierr);
+  ierr = MatSetOptionsPrefix(Filter, "Filter_"); CHKERRQ(ierr);
+  ierr = MatSetFromOptions(Filter); CHKERRQ(ierr);
+
+  // Set preallocation
+  ArrayXPI onDiag = ArrayXPI::Zero(this->nLocElem);
+  ArrayXPI offDiag = ArrayXPI::Zero(this->nLocElem);
+  for (int el = 0; el < I.size(); el++)
+  {
+    if (J(el) >= this->elmdist(this->myid) &&
+        J(el) < this->elmdist(this->myid+1) )
+    {
+      onDiag(I(el)-this->elmdist(this->myid))++;
+    }
+    else
+    {
+      offDiag(I(el)-this->elmdist(this->myid))++;
+    }
+  }
+
+  // Set the preallocation
+  ierr = MatXAIJSetPreallocation(Filter, 1, onDiag.data(),
+                                 offDiag.data(), 0, 0); CHKERRQ(ierr);
+
+  // Insert values into matrix
+  for (int el = 0; el < I.size(); el++)
+  {
+    ierr = MatSetValue(Filter, I(el), J(el), K(el), ADD_VALUES); CHKERRQ(ierr);
+  }
+
+  // Begin assembly (finish just before returning from function)
+  ierr = MatAssemblyBegin(Filter, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+
+  // Finish assembly of the matrix before continuing
+  ierr = MatAssemblyEnd(Filter, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+
+  // Scale Rows
+  Vec rowSum, Ones;
+  ierr = VecCreateMPI(comm, nLocElem, nElem, &rowSum); CHKERRQ(ierr);
+  ierr = VecDuplicate(rowSum, &Ones); CHKERRQ(ierr);
+  ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
+  ierr = MatGetRowSum(P, rowSum); CHKERRQ(ierr);
+  ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
+  ierr = MatDiagonalScale(P, rowSum, NULL); CHKERRQ(ierr);
+  ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
+  ierr = VecDestroy(&Ones); CHKERRQ(ierr);
+
+  return ierr;
 }

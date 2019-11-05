@@ -1,7 +1,9 @@
 # Add any directories, files, or patterns you don't want to be tracked by version control
 
-# Object files
+# Object files and their directories
 *.o
+opt/
+debug/
 
 # Batch scripts and makefiles (since they are system dependent)
 *.pbs
