@@ -104,7 +104,7 @@ int main(int argc, char **args)
     if (topOpt->penalties.size() != topOpt->void_penalties.size())
     {
       SETERRQ(topOpt->comm, PETSC_ERR_ARG_SIZ,
-              "Different number of penalties for stiffness and excessive feature size");
+              "Different number of penalties for stiffness and maximum feature size");
     }
     for (; (unsigned int)pind < topOpt->penalties.size(); pind++)
     {

@@ -76,24 +76,9 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   ArrayXPS lambda(nev_conv);
   lopgmres.Get_Eigenvalues(lambda.data());
 
-  // Get the eigenvectors and check for locality
-  /*Vec *phi, phi_copy;
-  lopgmres.Get_Eigenvectors(&phi);
-  PetscReal norm1, norminf;
-
-  ierr = VecNorm(phi[0], NORM_1, &norm1); CHKERRQ(ierr);
-  ierr = VecNorm(phi[0], NORM_INFINITY, &norminf); CHKERRQ(ierr);
-  ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Norm ratio: %1.8g\n\n", norm1/norminf); CHKERRQ(ierr);*/
-
-  // Number of converged eigenvalues to use for optimization
-  nev_conv -= (target_type == TOTAL_NEV || nev_conv <= nvals) ? 0 : 1;
-
-  // Merge any duplicate eigenvalues
-  for (short j = 0; j < nvals-1; j++)
-    values(j) = lambda[j];
-  for (short j = nvals-1; j < nev_conv; j++)
-    values(nvals-1) = lambda[j];
-  values(nvals-1) /= nev_conv-nvals+1;
+  // Aggregate eigenvalues
+  PetscScalar p = 8; //TODO: make this an option to set
+  values[0] = std::pow((PetscScalar)lambda.pow(p).sum(), 1/p);
 
   // Return if sensitivities aren't needed
   if (calc_gradient == PETSC_FALSE)
@@ -298,7 +283,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   for (long el = 0; el < topOpt->nLocElem; el++)
     gradients.row(el) = df.block(el*(DE*DE), 0, (DE*DE), nvals).colwise().sum();
 
-  /// dCdrhof*drhofdrho
+  /// dCdrhof*drhofdrho and power function accumulation
   Vec dlamdy;
   ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
   for (short i = 0; i < nvals; i++)
@@ -306,8 +291,13 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
     ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
     ierr = VecResetArray( dlamdy ); CHKERRQ(ierr);
+    if (i == 0)
+      gradients.col(0) *= std::pow((PetscScalar)lambda(0), p-1);
+    else
+      gradients.col(0) += std::pow((PetscScalar)lambda(i), p-1)*gradients.col(i);
   }
   ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
+  gradients *= std::pow((PetscScalar)values(0), 1-p);
 
   if (nev_conv < nvals)
   {

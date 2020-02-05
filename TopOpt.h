@@ -13,6 +13,7 @@ typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
 typedef Eigen::Array<PetscInt, -1,  1> ArrayXPI;
 typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
 typedef Eigen::Matrix<PetscScalar, -1, -1, Eigen::RowMajor> MatrixXdRM;
+typedef Eigen::Array<PetscScalar, -1, -1> ArrayXXPS;
 typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
@@ -198,12 +199,11 @@ public:
 
   // Parsing the input file
   PetscErrorCode Def_Param(MMA *optmma, VectorXPS &Dimensions, ArrayXPI &Nel,
-                 double &Rmin, double &Rmax, bool &Normalization,
+                 PetscScalar &Rmin, PetscScalar &Rmax, bool &Normalization,
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
-  PetscErrorCode Domain(Eigen::ArrayXXd &Points, const VectorXPS &Box,
-              Eigen::Array<bool, -1, 1> &elemValidity);
+  PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity);
   PetscErrorCode Def_BC();
   PetscErrorCode Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
               Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE);
@@ -240,7 +240,7 @@ public:
   PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                          ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
   PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
-                    int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J,
+                    int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                     ArrayXPI *cList, int mg_levels );
   idx_t ReorderParMetis( bool Reorder_Mesh,
                   idx_t nparts = 0, idx_t ncommonnodes = 0, double *tpwgts = NULL,

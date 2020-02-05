@@ -4,61 +4,70 @@
 
 namespace Domain
 {
-    Eigen::VectorXd Circle(const Eigen::MatrixXd &Nodes, const double xc, const double yc, const double r)
-    {
-        Eigen::VectorXd Keep(Nodes.rows());
-        for (long int i = 0; i < Nodes.rows(); i++)
-            Keep(i) = (Nodes(i, 0)-xc)*(Nodes(i, 0)-xc) + (Nodes(i, 1)-yc)*(Nodes(i, 1)-yc) - r*r;
-        return Keep;
-    }
+  ArrayXPS Ellipsoid(const Eigen::MatrixXd &Nodes, const ArrayXPS &xc, const ArrayXPS &r)
+  {
+    ArrayXPS Keep = (Nodes.col(0).array()-xc[0]).cwiseProduct(Nodes.col(0).array()-xc[0]) / (r[0]*r[0]);
+    for (int i = 1; i < Nodes.cols(); i++)
+      Keep += (Nodes.col(i).array()-xc[i]).cwiseProduct(Nodes.col(i).array()-xc[i]) / (r[i]*r[i]);
+    return Keep - 1;
+  }
 
-    Eigen::VectorXd Rectangle(const Eigen::MatrixXd &Nodes, const double xl, const double xr, const double yb, const double yt)
-    {
-        Eigen::VectorXd Keep(Nodes.rows());
-        for (long int i = 0; i < Nodes.rows(); i++)
-            Keep(i) = std::max(std::max(std::max(xl-Nodes(i,0),Nodes(i,0)-xr),yb-Nodes(i,1)),Nodes(i,1)-yt);
-        return Keep;
-    }
+  ArrayXPS Cylinder(const Eigen::MatrixXd &Nodes, const ArrayXPS &xc, const VectorXPS &normal,
+                     const double h, const double r)
+  {
+    MatrixXPS Offset = Nodes;
+    for (int i = 0; i < Offset.cols(); i++)
+      Offset.col(i).array() -= xc[i];
+    VectorXPS Axial = Offset * normal;
+    Offset -= Axial * normal.transpose();
+    VectorXPS Transverse = Offset.cwiseProduct(Offset).rowwise().sum().cwiseSqrt().array() - r;
 
-    Eigen::VectorXd Line(const Eigen::MatrixXd &Nodes, const double x1, const double y1, const double x2, const double y2)
-    {
-        Eigen::Vector2d a;
-        Eigen::VectorXd Keep(Nodes.rows());
-        Eigen::MatrixXd b(Nodes.rows(),Nodes.cols());
-        a << x2-x1, y2-y1;
-        a = a/a.norm();
-        b.col(0) = Nodes.col(0)-Eigen::VectorXd::Constant(Nodes.rows(),x1); b.col(1) = Nodes.col(1)-Eigen::VectorXd::Constant(Nodes.rows(),y1);
-        Keep = b.col(0)*a(1)-b.col(1)*a(0);
-        return Keep;
-    }
+    return Transverse.array().cwiseMax(Axial.cwiseAbs().array()-h);
+  }
 
-    Eigen::VectorXd Union(const Eigen::VectorXd &d1, const Eigen::VectorXd &d2)
-    {
-        Eigen::VectorXd dNew(d1.rows());
-        for (long int i = 0; i < d1.rows(); i++)
-            dNew(i) = std::min(d1(i),d2(i));
-        return dNew;
-    }
+  ArrayXPS Hexahedron(const Eigen::MatrixXd &Nodes, const ArrayXPS &low, const ArrayXPS &high)
+  {
+    ArrayXPS Keep = (low[0] - Nodes.col(0).array()).cwiseMax(Nodes.col(0).array() - high[0]);
+    for (int i = 1; i < Nodes.cols(); i++)
+      Keep = Keep.cwiseMax((low[i] - Nodes.col(i).array()).cwiseMax(Nodes.col(i).array() - high[i]));
+    return Keep;
+  }
 
-    Eigen::VectorXd Intersect(const Eigen::VectorXd &d1, const Eigen::VectorXd &d2)
-    {
-        Eigen::VectorXd dNew(d1.rows());
-        for (long int i = 0; i < d1.rows(); i++)
-            dNew(i) = std::max(d1(i),d2(i));
-        return dNew;
-    }
+  ArrayXPS Plane(const Eigen::MatrixXd &Nodes, const ArrayXPS &base, const VectorXPS &normal)
+  {
+    MatrixXPS Offset = Nodes;
+    for (int i = 0; i < Offset.cols(); i++)
+      Offset.col(i).array() -= base[i];
+    return (Offset * normal).array();
+  }
 
-    Eigen::VectorXd Difference(const Eigen::VectorXd &d1, const Eigen::VectorXd &d2)
+  ArrayXPS Union(const VectorXPS &d1, const VectorXPS &d2)
+  {
+    ArrayXPS dNew(d1.rows());
+    for (int i = 0; i < d1.rows(); i++)
+      dNew(i) = std::min(d1(i),d2(i));
+    return dNew;
+  }
+
+  ArrayXPS Intersect(const VectorXPS &d1, const VectorXPS &d2)
+  {
+    ArrayXPS dNew(d1.rows());
+    for (int i = 0; i < d1.rows(); i++)
+      dNew(i) = std::max(d1(i),d2(i));
+    return dNew;
+  }
+
+  ArrayXPS Difference(const VectorXPS &d1, const VectorXPS &d2)
+  {
+    ArrayXPS dNew(d1.rows());
+    for (int i = 0; i < d1.rows(); i++)
     {
-        Eigen::VectorXd dNew(d1.rows());
-        for (long int i = 0; i < d1.rows(); i++)
-        {
-            if (d1(i)>0)
-                dNew(i) = d1(i);
-            else
-                dNew(i) = -d2(i);
-        }
-        return dNew;
+      if (d1(i)>0)
+        dNew(i) = d1(i);
+      else
+        dNew(i) = -d2(i);
     }
+    return dNew;
+  }
 
 }

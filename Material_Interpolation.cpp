@@ -25,7 +25,7 @@ PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
     ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
   }
 
-  PetscScalar eps = 1e-10; // Minimum stiffness
+  PetscScalar eps = 0;//1e-10; // Minimum stiffness
   PetscScalar *p_x, *p_y; // Pointers
 
   // Apply the filter to design variables
@@ -54,88 +54,81 @@ PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
   // Setting the actual value of z
   ierr = VecPointwiseMult(z, this->rho, this->y); CHKERRQ(ierr);
 
+  // Volume Interpolations
+  ierr = VecCopy(this->rho, this->V); CHKERRQ(ierr);
+  ierr = VecSet(this->dVdrho, 1); CHKERRQ(ierr);
+
+  ierr = VecCopy(z, this->dEsdz); CHKERRQ(ierr);
+  ierr = VecPow(this->dEsdz, this->penal-1); CHKERRQ(ierr);
+  ierr = VecPointwiseMult(this->Es, this->dEsdz, z); CHKERRQ(ierr);
+  ierr = VecScale(this->dEsdz, this->penal); CHKERRQ(ierr);
+
+  ierr = VecCopy(this->dEsdz, this->dEdz); CHKERRQ(ierr);
+  ierr = VecScale(this->dEdz, 1-eps); CHKERRQ(ierr);
+  ierr = VecSet(this->E, eps); CHKERRQ(ierr);
+  ierr = VecAXPY(this->E, 1-eps, this->Es); CHKERRQ(ierr);
+
   switch (interpolation) {
-    case SIMP: case SIMP_CUT: case SIMP_LOGISTIC: {
-      // Volume Interpolations
-      ierr = VecCopy(this->rho, this->V); CHKERRQ(ierr);
-      ierr = VecSet(this->dVdrho, 1); CHKERRQ(ierr);
+    case SIMP:
+      break;
+    case SIMP_CUT: {
+      Vec tempVec;
+      VecDuplicate(this->x, &tempVec);
+      ierr = VecGetArray(z, &p_x); CHKERRQ(ierr);
+      ierr = VecGetArray(tempVec, &p_y); CHKERRQ(ierr);
+      Eigen::Map< ArrayXPS > ZZ(p_x, this->nLocElem);
+      Eigen::Map< ArrayXPS > cut(p_y, this->nLocElem);
 
-      ierr = VecCopy(z, this->dEsdz); CHKERRQ(ierr);
-      ierr = VecPow(this->dEsdz, this->penal-1); CHKERRQ(ierr);
-      ierr = VecPointwiseMult(this->Es, this->dEsdz, z); CHKERRQ(ierr);
-      ierr = VecScale(this->dEsdz, this->penal); CHKERRQ(ierr);
+      cut = (ZZ > interp_param[0]).cast<PetscScalar>();
+      
+      ierr = VecRestoreArray(z, &p_x); CHKERRQ(ierr);
+      ierr = VecRestoreArray(tempVec, &p_y); CHKERRQ(ierr);
 
-      ierr = VecCopy(this->dEsdz, this->dEdz); CHKERRQ(ierr);
-      ierr = VecScale(this->dEdz, 1-eps); CHKERRQ(ierr);
-      ierr = VecSet(this->E, eps); CHKERRQ(ierr);
-      ierr = VecAXPY(this->E, 1-eps, this->Es); CHKERRQ(ierr);
+      ierr = VecPointwiseMult(this->Es, this->Es, tempVec); CHKERRQ(ierr);
+      ierr = VecPointwiseMult(this->dEsdz, this->dEsdz, tempVec); CHKERRQ(ierr);
+      ierr = VecDestroy(&tempVec); CHKERRQ(ierr);
+      break;
+    }
+    case SIMP_LOGISTIC: {
+      ierr = VecGetArray(z, &p_x); CHKERRQ(ierr);
+      Eigen::Map< ArrayXPS > ZZ(p_x, this->nLocElem);
+      ArrayXPS denom = 1 + (interp_param[0]*(interp_param[1]-ZZ)).exp();
+      ierr = VecRestoreArray(z, &p_x); CHKERRQ(ierr);
 
-      switch (interpolation) {
-        case SIMP:
-          break;
-        case SIMP_CUT: {
-          Vec tempVec;
-          VecDuplicate(this->x, &tempVec);
-          ierr = VecGetArray(z, &p_x); CHKERRQ(ierr);
-          ierr = VecGetArray(tempVec, &p_y); CHKERRQ(ierr);
-          Eigen::Map< ArrayXPS > ZZ(p_x, this->nLocElem);
-          Eigen::Map< ArrayXPS > cut(p_y, this->nLocElem);
+      ierr = VecGetArray(this->Es, &p_x); CHKERRQ(ierr);
+      Eigen::Map< ArrayXPS > Es(p_x, this->nLocElem); CHKERRQ(ierr);
+      Es /= denom;
 
-          cut = (ZZ > interp_param[0]).cast<PetscScalar>();
-          
-          ierr = VecRestoreArray(z, &p_x); CHKERRQ(ierr);
-          ierr = VecRestoreArray(tempVec, &p_y); CHKERRQ(ierr);
+      ierr = VecGetArray(this->dEsdz, &p_y); CHKERRQ(ierr);
+      Eigen::Map< ArrayXPS > dEsdz(p_y, this->nLocElem); CHKERRQ(ierr);
+      dEsdz = (dEsdz + (Es*interp_param[0])*(1-1/denom))/denom;
 
-          ierr = VecPointwiseMult(this->Es, this->Es, tempVec); CHKERRQ(ierr);
-          ierr = VecPointwiseMult(this->dEsdz, this->dEsdz, tempVec); CHKERRQ(ierr);
-          ierr = VecDestroy(&tempVec); CHKERRQ(ierr);
-          break;
-        }
-        case SIMP_LOGISTIC: {
-          ierr = VecGetArray(z, &p_x); CHKERRQ(ierr);
-          Eigen::Map< ArrayXPS > ZZ(p_x, this->nLocElem);
-          ArrayXPS denom = 1 + (interp_param[0]*(interp_param[1]-ZZ)).exp();
-          ierr = VecRestoreArray(z, &p_x); CHKERRQ(ierr);
-
-          ierr = VecGetArray(this->Es, &p_x); CHKERRQ(ierr);
-          Eigen::Map< ArrayXPS > Es(p_x, this->nLocElem); CHKERRQ(ierr);
-          Es /= denom;
-
-          ierr = VecGetArray(this->dEsdz, &p_y); CHKERRQ(ierr);
-          Eigen::Map< ArrayXPS > dEsdz(p_y, this->nLocElem); CHKERRQ(ierr);
-          dEsdz = (dEsdz + (Es*interp_param[0])*(1-1/denom))/denom;
-
-          ierr = VecRestoreArray(this->Es, &p_x); CHKERRQ(ierr);
-          ierr = VecRestoreArray(this->dEsdz, &p_y); CHKERRQ(ierr);
-          break;
-        }
-      }
-
-    ierr = VecDestroy(&z); CHKERRQ(ierr);
-
-    // Ghost updates
-    ierr = VecGhostUpdateBegin(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    
-    ierr = VecGhostUpdateBegin(this->dVdrho, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->dVdrho, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-    ierr = VecGhostUpdateBegin(this->dEdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->dEdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    
-    ierr = VecGhostUpdateBegin(this->dEsdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->dEsdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    
-    ierr = VecGhostUpdateBegin(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    
-    ierr = VecGhostUpdateBegin(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecGhostUpdateEnd(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    break;
+      ierr = VecRestoreArray(this->Es, &p_x); CHKERRQ(ierr);
+      ierr = VecRestoreArray(this->dEsdz, &p_y); CHKERRQ(ierr);
+      break;
+    }
   }
-  default:
-    SETERRQ(comm, PETSC_ERR_ARG_OUTOFRANGE, "Shouldn't be able to reach this line");
-  }
+
+  ierr = VecDestroy(&z); CHKERRQ(ierr);
+
+  // Ghost updates
+  ierr = VecGhostUpdateBegin(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->V, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  
+  ierr = VecGhostUpdateBegin(this->dVdrho, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->dVdrho, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+
+  ierr = VecGhostUpdateBegin(this->dEdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->dEdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  
+  ierr = VecGhostUpdateBegin(this->dEsdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->dEsdz, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  
+  ierr = VecGhostUpdateBegin(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->Es, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  
+  ierr = VecGhostUpdateBegin(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(this->E, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
   
   return 0;
 }

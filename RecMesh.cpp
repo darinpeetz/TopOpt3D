@@ -376,7 +376,6 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   regular = 1;
 
   /// Constitutive matrix
-  this->numDims = dimensions.size()/2; // I think this is redundant to the SetDimensions call above
   switch (this->numDims)
   {
     case 1:
@@ -472,16 +471,8 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
   ierr = RecFilter(first, last, dx, Rmin, Nel, this->P); CHKERRQ(ierr);
 
+  // Maximum length scale filter
   ierr = RecFilter(first, last, dx, Rmax, Nel, this->R, 1); CHKERRQ(ierr);
-  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
-  ierr = MatGetRowSum(this->R, this->REdge); CHKERRQ(ierr);
-  PetscScalar rowSumMax;
-  ierr = VecMax(this->REdge, NULL, &rowSumMax); CHKERRQ(ierr);
-  Vec Rtemp;
-  ierr = VecDuplicate(this->REdge, &Rtemp); CHKERRQ(ierr);
-  ierr = VecSet(Rtemp, rowSumMax); CHKERRQ(ierr);
-  ierr = VecAYPX(this->REdge, -1, Rtemp); CHKERRQ(ierr);
-  ierr = VecDestroy(&Rtemp); CHKERRQ(ierr);
 
   // Create the geometric coarse-grid restrictions
   ArrayXPI I[mg_levels-1], J[mg_levels-1], cList[mg_levels-1];
@@ -538,7 +529,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
 
   /// Apply shape functions to base mesh
   // Start by determining center of every element
-  Eigen::ArrayXXd elemCenters = Eigen::ArrayXXd::Zero(this->nLocElem,this->numDims);
+  MatrixXPS elemCenters = Eigen::ArrayXXd::Zero(this->nLocElem,this->numDims);
   elemCenters.col(0) = (Eigen::VectorXd::LinSpaced(last[0]-first[0],
                        dx[0]*first[0]+dimensions(0),dx[0]*last[0]+dimensions(0)-dx[0])
                        .replicate(last[1]-first[1],1)
@@ -568,19 +559,13 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
     padding *= Nel(dim);
   // Global validity/numbering array
   Eigen::Array<bool, -1, 1> elemValidity = Eigen::Array<bool, -1, 1>::Ones(nLocElem);
-  Domain(elemCenters, dimensions, elemValidity);
+  Domain(elemCenters, elemValidity);
 
-  // Check if any process wants to remove elements
-  short reductions = (short)elemValidity.all();
-  MPI_Allreduce(MPI_IN_PLACE, &reductions, 1, MPI_SHORT, MPI_MIN, comm);
-
-  if (reductions == 0)
-  {
-    int nInterfaceNodes = 1;
-    for (int dim = 1; dim < numDims; dim++)
-      nInterfaceNodes *= Nel(dim-1)+1;
-    ApplyDomain(elemValidity, padding, nInterfaceNodes, I, J, cList, mg_levels);
-  }
+  // Trim domain
+  int nInterfaceNodes = 1;
+  for (int dim = 1; dim < numDims; dim++)
+    nInterfaceNodes *= Nel(dim-1)+1;
+  ApplyDomain(elemValidity, padding, nInterfaceNodes, I, J, K, cList, mg_levels);
 
   /// Get a better distribution of elements
   ReorderParMetis(Reorder_Mesh);
@@ -616,8 +601,8 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
 /**                  Cut Mesh if necessary                      **/
 /*****************************************************************/
 PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
-                 int padding, int nInterfaceNodes,
-                 ArrayXPI *I, ArrayXPI *J, ArrayXPI *cList, int mg_levels )
+                 int padding, int nInterfaceNodes, ArrayXPI *I,
+                 ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels )
 {
   PetscErrorCode ierr = 0;
   /// elem validity should be of size nLocElem, padding is the number of
@@ -1021,88 +1006,107 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   /// Reassign node numbers in projection matrices
   // Start by getting a global list of the new node numbers
   ArrayXPI allNodeNumber = ArrayXPI::Zero(nNode);
-  ArrayXPI displs = ArrayXPI::Zero(nprocs);
-  partial_sum(nddist.data(), nddist.data()+nprocs-1, displs.data()+1);
-  ArrayXPI sizes = nddist.segment(1,nprocs)-nddist.segment(0,nprocs);
-  allNodeNumber(nddist(myid),nddist(myid+1)-nddist(myid)) = 
-      newNodeNumber(nddist(myid)-start,nddist(myid+1)-nddist(myid));
-  MPI_Allgatherv(newNodeNumber.data()+nddist(myid)-start,
-                 nddist(myid+1)-nddist(myid), MPI_PETSCINT, allNodeNumber.data(),
-                 sizes.data(), displs.data(), MPI_PETSCINT, comm);
+  allNodeNumber.segment(nddist(myid),nddist(myid+1)-nddist(myid)) = 
+      newNodeNumber.segment(nddist(myid)-start,nddist(myid+1)-nddist(myid));
+  // ArrayXPI displs = ArrayXPI::Zero(nprocs);
+  // partial_sum(nddist.data(), nddist.data()+nprocs-1, displs.data()+1);
+  // ArrayXPI sizes = nddist.segment(1,nprocs)-nddist.segment(0,nprocs);
+  // MPI_Allgatherv(newNodeNumber.data()+nddist(myid)-start,
+  //                nddist(myid+1)-nddist(myid), MPI_PETSCINT, allNodeNumber.data(),
+  //                sizes.data(), displs.data(), MPI_PETSCINT, comm);
   MPI_Allreduce(MPI_IN_PLACE, allNodeNumber.data(), nNode, MPI_PETSCINT,
                 MPI_SUM, comm);
   // Now update numbers in the lists
   for (int level = 0; level < mg_levels-1; level++)
   { 
-    int Iind = 0, Jind = 0, cind = 0;
+    int IJKind = 0, cind = 0;
     for (int j = 0; j < I[level].size(); j++)
     {
-      if (allNodeNumber(I[level](j)) != nNode)
-        I[level](Iind++) = allNodeNumber(I[level](j))-1;
-      if (allNodeNumber(J[level](j)) != nNode)
-        J[level](Jind++) = allNodeNumber(J[level](j))-1;
+      if ((allNodeNumber(I[level](j)) > 0) && (allNodeNumber(J[level](j)) > 0))
+      {
+        I[level](IJKind) = allNodeNumber(I[level](j))-1;
+        J[level](IJKind) = allNodeNumber(J[level](j))-1;
+        K[level](IJKind) = K[level](j);
+        IJKind++;
+      }
     }
     for (int j = 0; j < cList[level].size(); j++)
-      if (allNodeNumber(cList[level](j)) != nNode)
+      if (allNodeNumber(cList[level](j)) > 0)
         cList[level](cind++) = allNodeNumber(cList[level](j))-1;
-    I[level].conservativeResize(Iind); J[level].conservativeResize(Jind);
+    I[level].conservativeResize(IJKind); J[level].conservativeResize(IJKind);
+    K[level].conservativeResize(IJKind);
     cList[level].conservativeResize(cind);
   }
 
-  /// Remove elements from the filter
-  // By row first
-
-  // Now renumber and remove invalid column elements
-  // Loop through all arrays owned by other processes
-  for (int proc = 0; proc < nprocs; proc++)
-  {
-    int activeproc = (proc+myid) % nprocs;
-    int ind = 0;
-    
-    // Share the validity information with the next process
-    MPI_Request request = MPI_REQUEST_NULL;
-    MPI_Status status;
-    if (myid > 0)
-    {
-      MPI_Issend(newElemNumber.data(), newElemNumber.size(), MPI_PETSCINT,
-                 myid-1, 0, comm, &request);
-    }
-    else
-    {
-      MPI_Issend(newElemNumber.data(), newElemNumber.size(), MPI_PETSCINT,
-                 nprocs-1, 0, comm, &request);
-    }
-
-    // Check the incoming message and recieve the new information
-    if (myid < nprocs-1)
-    {
-      MPI_Probe(myid+1, 0, comm, &status);
-      int count;
-      MPI_Get_count(&status, MPI_PETSCINT, &count);
-      ArrayXPI newNumber(count);
-      MPI_Recv(newNumber.data(), count, MPI_PETSCINT, myid+1, 0, comm, &status);
-      MPI_Wait(&request, MPI_STATUS_IGNORE);
-      newElemNumber = newNumber;
-    }
-    else
-    {
-      MPI_Probe(0, 0, comm, &status);
-      int count;
-      MPI_Get_count(&status, MPI_PETSCINT, &count);
-      ArrayXPI newNumber(count);
-      MPI_Recv(newNumber.data(), count, MPI_PETSCINT, 0, 0, comm, &status);
-      MPI_Wait(&request, MPI_STATUS_IGNORE);
-      newElemNumber = newNumber;
-    }
-  }
-
   /// Reset element distribution array
-  number = elmdist; // Need this to fix filter matrix later
+  number(this->myid) = elmdist(this->myid); // Save this value for assembling Proj below
   elmdist.setZero(nprocs+1);
   elmdist(myid+1) = element.rows();
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, elmdist.data()+1, 1, MPI_PETSCINT, comm);
   for (int id = 1; id <= nprocs; id++)
     elmdist(id) += elmdist(id-1);
+
+  /// Remove elements from the filter using projection matrices
+  Mat Proj;
+  ierr = MatCreate(comm, &Proj); CHKERRQ(ierr);
+  ierr = MatSetSizes(Proj, this->nLocElem,
+                     this->elmdist(myid+1)-this->elmdist(myid),
+                     PETSC_DETERMINE, PETSC_DETERMINE); CHKERRQ(ierr);
+  ierr = MatSetOptionsPrefix(Proj, "Proj_"); CHKERRQ(ierr);
+  ierr = MatSetFromOptions(Proj); CHKERRQ(ierr);
+
+  // Set preallocation
+  ArrayXPI onDiag = ArrayXPI::Ones(this->nLocElem);
+  ArrayXPI offDiag = ArrayXPI::Ones(this->nLocElem);
+  ierr = MatXAIJSetPreallocation(Proj, 1, onDiag.data(),
+                                 offDiag.data(), 0, 0); CHKERRQ(ierr);
+
+  // Set 1's for each element that remains
+  PetscInt newEl = this->elmdist(this->myid);
+  for (int el = 0; el < elemValidity.size(); el++)
+  {
+    if (elemValidity(el))
+    {
+      ierr = MatSetValue(Proj, el + number(this->myid),
+                         newEl++, 1.0, INSERT_VALUES); CHKERRQ(ierr);
+    }
+  }
+  ierr = MatAssemblyBegin(Proj, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(Proj, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+
+  Mat tempMat;
+  ierr = MatPtAP(this->P, Proj, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
+  ierr = MatDestroy(&this->P); CHKERRQ(ierr);
+  this->P = tempMat;
+  tempMat = NULL;
+  ierr = MatPtAP(this->R, Proj, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
+  ierr = MatDestroy(&this->R); CHKERRQ(ierr);
+  this->R = tempMat;
+  ierr = MatDestroy(&Proj); CHKERRQ(ierr);
+
+  // Create a vector of how many fewer elements edge elements have in
+  // their max length scale radius
+  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
+  ierr = MatGetRowSum(this->R, this->REdge); CHKERRQ(ierr);
+  PetscScalar rowSumMax;
+  ierr = VecMax(this->REdge, NULL, &rowSumMax); CHKERRQ(ierr);
+  Vec Rtemp;
+  ierr = VecDuplicate(this->REdge, &Rtemp); CHKERRQ(ierr);
+  ierr = VecSet(Rtemp, rowSumMax); CHKERRQ(ierr);
+  ierr = VecAYPX(this->REdge, -1, Rtemp); CHKERRQ(ierr);
+  ierr = VecDestroy(&Rtemp); CHKERRQ(ierr);
+
+  // Scale Rows of the minimum length filter matrix
+  Vec rowSum, Ones;
+  ierr = MatCreateVecs(P, &rowSum, &Ones); CHKERRQ(ierr);
+  ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
+  ierr = MatGetRowSum(P, rowSum); CHKERRQ(ierr);
+  ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
+  ierr = MatDiagonalScale(P, rowSum, NULL); CHKERRQ(ierr);
+  ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
+  ierr = VecDestroy(&Ones); CHKERRQ(ierr);
+
+  // Reset global and local element counts
   nLocElem = element.rows();
   nElem = elmdist(nprocs);
 

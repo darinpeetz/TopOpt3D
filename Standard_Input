@@ -13,7 +13,7 @@
     Change_Limit: 0.001
     Step_Limit: 0.05
 
-    RFactor: 1.5
+    RMinFactor: 1.5
     RMaxFactor: 6
     Void_Penalty: 1, 0.25, 4
     Void_Minimum: 5

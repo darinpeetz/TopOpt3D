@@ -267,6 +267,16 @@ int TopOpt::FEAssemble( )
   ierr = MatDiagonalSet(this->K, this->spKVec, ADD_VALUES); CHKERRQ(ierr);
   // Apply Dirichlet B.C.'s
   ierr = MatZeroRowsColumns(this->K, fixedDof.size(), fixedDof.data(), 1.0, U, F); CHKERRQ(ierr);
+  // Put a 1 on the diagonal wherever a node is fully detached from the structure
+  Vec Diagonal; PetscScalar *p_Diag; PetscInt rows;
+  ierr = MatCreateVecs(this->K, NULL, &Diagonal); CHKERRQ(ierr);
+  ierr = MatGetDiagonal(this->K, Diagonal); CHKERRQ(ierr);
+  ierr = VecGetArray(Diagonal, &p_Diag); CHKERRQ(ierr);
+  ierr = VecGetLocalSize(Diagonal, &rows); CHKERRQ(ierr);
+  for (int i = 0; i < rows; i++)
+    p_Diag[i] = (PetscScalar)(p_Diag[i] == 0);
+  ierr = VecRestoreArray(Diagonal, &p_Diag); CHKERRQ(ierr);
+  ierr = MatDiagonalSet(this->K, Diagonal, ADD_VALUES); CHKERRQ(ierr);
   // Set operators
   ierr = KSPSetOperators(this->KUF, this->K, this->K); CHKERRQ(ierr);
 
@@ -334,11 +344,17 @@ int TopOpt::FESolve( )
       {
         for (int i = 1; i < levels; i++)
         {
+          Mat mat;
+          PetscInt size, blocksize;
           ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+          ierr = KSPGetOperators(smooth_ksp, &mat, NULL); CHKERRQ(ierr);
+          ierr = MatGetSize(mat, &size, NULL); CHKERRQ(ierr);
+          ierr = MatGetBlockSize(mat, &blocksize); CHKERRQ(ierr);
           ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
           ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
           ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
           ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
+          ierr = PCBJacobiSetTotalBlocks(smooth_pc, size/blocksize, NULL);
         }
       }
       else if (!strcmp(this->smoother.c_str(), KSPCHEBYSHEV))
@@ -364,6 +380,10 @@ int TopOpt::FESolve( )
     }
   }
   ierr = KSPSolve( this->KUF, this->F, this->U ); CHKERRQ(ierr);
+  PetscViewer view;
+  ierr = PetscViewerBinaryOpen(this->comm, "K.bin", FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+  ierr = MatView(this->K, view); CHKERRQ(ierr);
+  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
   KSPConvergedReason reason;
   ierr = KSPGetConvergedReason(this->KUF, &reason); CHKERRQ(ierr);

@@ -8,7 +8,6 @@
 #include <cmath>
 
 using namespace std;
-typedef Eigen::Matrix<double, -1, -1, Eigen::RowMajor> MatrixXdRM;
 
 /****************************************************************/
 /**         Find next numerical value in string of text        **/
@@ -25,11 +24,11 @@ void Find_Next_Digit(const char *line, unsigned short &offset, int length)
 /****************************************************************/
 /**     Get numerical values from a line in the input file     **/
 /****************************************************************/
-vector<double> Get_Values(string line)
+vector<PetscScalar> Get_Values(string line)
 {
   unsigned short offset = 0;
   char *next;
-  vector<double> vals;
+  vector<PetscScalar> vals;
   while (true)
   {
     Find_Next_Digit(line.c_str(), offset, line.length());
@@ -104,7 +103,7 @@ PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
 /**       Set various parameters/options from input file       **/
 /****************************************************************/
 PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
-               ArrayXPI &Nel, double &Rmin, double &Rmax, bool &Normalization,
+               ArrayXPI &Nel, PetscScalar &Rmin, PetscScalar &Rmax, bool &Normalization,
                bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
 {
   PetscErrorCode ierr = 0;
@@ -143,7 +142,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       {
         getline(file, line);
         offset = 0;
-        vector<double> temp;
+        vector<PetscScalar> temp;
         while (true)
         {
           Find_Next_Digit(line.c_str(), offset, line.length());
@@ -192,7 +191,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         PetscScalar pstep = strtod(line.c_str(), NULL);
         file >> line;
         PetscScalar pmax = strtod(line.c_str(), NULL);
-        this->penalties.reserve(int((pmax-pmin)/pstep));
+        this->penalties.reserve(int(std::max(pmax-pmin, 0.0)/pstep));
         for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
           this->penalties.push_back(p);
       }
@@ -208,7 +207,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
           this->void_penalties.push_back(pmin);
         else
         {
-          this->void_penalties.reserve(int((pmax-pmin)/pstep));
+          this->void_penalties.reserve(int(std::max(pmax-pmin, 0.0)/pstep));
           for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
             this->void_penalties.push_back(p);
         }
@@ -312,7 +311,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       {
         file >> line;
         int c_size = strtol(line.c_str(), NULL, 0);
-        double temp = log2(Nel.size());
+        PetscScalar temp = log2(Nel.size());
         for (int i = 0; i < Nel.size(); i++)
           temp += log2(Nel(i)+1);
         temp -= log2(c_size);
@@ -415,7 +414,7 @@ PetscErrorCode TopOpt::Set_Funcs()
       file >> line;
 
       // Function details
-      double min = 0, max = 0;
+      PetscScalar min = 0, max = 0;
       vector<PetscScalar> values;
       PetscBool objective = PETSC_TRUE;
 
@@ -496,11 +495,206 @@ PetscErrorCode TopOpt::Set_Funcs()
 /****************************************************************/
 /**             Check if elements should be removed            **/
 /****************************************************************/
-PetscErrorCode TopOpt::Domain(Eigen::ArrayXXd &Points, const Eigen::VectorXd &Box,
-            Eigen::Array<bool, -1, 1> &elemValidity)
+PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity)
 {
   PetscErrorCode ierr = 0;
-  elemValidity.setOnes(Points.rows());
+  // Variables needed for parsing input file
+  ifstream file(filename.c_str());
+  if (!file.is_open())
+    SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Could not find specified input file");
+  string line;
+  file >> line;
+  bool active_section = false;
+
+  // Parse the file
+  ArrayXXPS D = ArrayXXPS::Zero(Points.rows(), 0);
+  while (!file.eof())
+  {
+    if (!active_section)
+    {
+      active_section = !line.compare("[Domain]");
+      getline(file, line);
+      file >> line;
+    }
+    else
+    {
+      if (!line.compare("[/Domain]"))
+      {
+        elemValidity.setOnes(Points.rows());
+        elemValidity = (D.col(D.cols()-1) < 0.0);
+        return ierr;
+      }
+      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
+      {
+        getline(file,line);
+        file >> line;
+        continue;
+      }
+
+      // Convert to all uppercase to avoid captilization errors
+      line[0] = toupper(line[0]);
+
+      if (line[0] == 'E') // Ellipsoid
+      {
+        ArrayXPS center, radius;
+        getline(file, line);
+        while (true)
+        {
+          file >> line;
+          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Centers for Ellipsoid are specified incorrectly\n";
+            center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          if (toupper(line[0]) == 'R')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Radii for ellipsoid are specified incorrectly\n";
+            radius = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          break;
+        }
+        D.conservativeResize(D.rows(), D.cols()+1);
+        D.col(D.cols()-1) = Domain::Ellipsoid(Points, center, radius);
+      }
+      else if (line[0] == 'C') // Cylinder
+      {
+        ArrayXPS center;
+        VectorXPS normal;
+        PetscScalar r, h;
+        getline(file, line);
+        while (true)
+        {
+          file >> line;
+          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Centers for Cylinder are specified incorrectly\n";
+            center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          if (toupper(line[0]) == 'N')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Axis vectors for Cylinder are specified incorrectly\n";
+            normal = Eigen::Map<VectorXPS>(temp.data(), temp.size());
+            continue;
+          }
+          if (toupper(line[0]) == 'R')
+          {
+            getline(file, line);
+            r = strtod(line.c_str(), NULL);
+            continue;
+          }
+          if (toupper(line[0]) == 'H' && toupper(line[2]) == 'I')
+          {
+            getline(file, line);
+            h = strtod(line.c_str(), NULL);
+            continue;
+          }
+          break;
+        }
+        D.conservativeResize(D.rows(), D.cols()+1);
+        D.col(D.cols()-1) = Domain::Cylinder(Points, center, normal, h, r);
+      }
+      else if (line[0] == 'H') // Hexahedron
+      {
+        ArrayXPS low, up;
+        getline(file, line);
+        while (true)
+        {
+          file >> line;
+          if (toupper(line[0]) == 'L')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Lower bounds for hexahedron are specified incorrectly\n";
+            low = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          if (toupper(line[0]) == 'U' && toupper(line[1]) == 'P')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Upper bounds for hexahedron are specified incorrectly\n";
+            up = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          break;
+        }
+        D.conservativeResize(D.rows(), D.cols()+1);
+        D.col(D.cols()-1) = Domain::Hexahedron(Points, low, up);
+      }
+      else if (line[0] == 'P') // Plane
+      {
+        ArrayXPS base;
+        VectorXPS normal;
+        getline(file, line);
+        while (true)
+        {
+          file >> line;
+          if (toupper(line[0]) == 'B')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Base coordinates for plane are specified incorrectly\n";
+            base = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
+            continue;
+          }
+          if (toupper(line[0]) == 'N')
+          {
+            getline(file, line);
+            vector<PetscScalar> temp = Get_Values(line);
+            if (temp.size() != (unsigned short)numDims)
+              cout << "Normal coordinates for plane are specified incorrectly\n";
+            normal = Eigen::Map<VectorXPS>(temp.data(), temp.size());
+            continue;
+          }
+          break;
+        }
+        D.conservativeResize(D.rows(), D.cols()+1);
+        D.col(D.cols()-1) = Domain::Plane(Points, base, normal);
+      }
+      else if (line[0] == 'U' || line[0] == 'I' || line[0] == 'D')
+      { // Union, Intersection, or Difference
+        char type = line[0];
+        PetscInt d1, d2;
+        file >> line;
+        d1 = strtol(line.c_str(), NULL, 0);
+        getline(file, line);
+        d2 = strtol(line.c_str(), NULL, 0);
+        file >> line;
+        D.conservativeResize(D.rows(), D.cols()+1);
+
+        if (type == 'U') // Union
+          D.col(D.cols()-1) = Domain::Union(D.col(d1), D.col(d2));
+        else if (type == 'I') // Intersection
+          D.col(D.cols()-1) = Domain::Intersect(D.col(d1), D.col(d2));
+        else if (type == 'D') // Difference
+          D.col(D.cols()-1) = Domain::Difference(D.col(d1), D.col(d2));
+      }
+      else
+      {
+        SETERRQ1(comm, PETSC_ERR_SUP, "Unknown domain specifier, %s, specified",
+                  line.c_str());
+      }
+    }
+        
+  }
 
   return ierr;
 }
@@ -558,7 +752,7 @@ PetscErrorCode TopOpt::Def_BC()
         if (!line.compare(0,6,"Center"))
         {
           getline(file, line);
-          vector<double> temp = Get_Values(line);
+          vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Centers for BC " << TYPE << " are specified incorrectly\n";
           center = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());
@@ -567,7 +761,7 @@ PetscErrorCode TopOpt::Def_BC()
         if (!line.compare(0,6,"Radius"))
         {
           getline(file, line);
-          vector<double> temp = Get_Values(line);
+          vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Radii for BC " << TYPE << " are specified incorrectly\n";
           radius = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());
@@ -576,7 +770,7 @@ PetscErrorCode TopOpt::Def_BC()
         if (!line.compare(0,6,"Limits"))
         {
           getline(file, line);
-          vector<double> temp = Get_Values(line);
+          vector<PetscScalar> temp = Get_Values(line);
           if (temp.size()/2 != (unsigned short)numDims)
             cout << "Limits for BC " << TYPE << " are specified incorrectly\n";
           limits = Eigen::Map<Eigen::ArrayXXd>(temp.data(), 2, temp.size()/2);
@@ -586,7 +780,7 @@ PetscErrorCode TopOpt::Def_BC()
         if (!line.compare(0,6,"Values"))
         {
           getline(file, line);
-          vector<double> temp = Get_Values(line);
+          vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Values for BC " << TYPE << " are specified incorrectly\n";
           values = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());

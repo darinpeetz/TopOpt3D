@@ -14,6 +14,10 @@ typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 /// This method calls Create_Interpolation repeatedly to construct all interpolation
 /// matrices for the full multigrid hierarchy.  The matrices are not assembled to make
 /// any renumberings from element redistribution easier.
+// I: row indices (the fine nodes)
+// J: col indices (the coarse nodes)
+// K: interpolation coefficients
+// cList: the coarse nodes on each level
 int TopOpt::Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
             ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels )
 {
