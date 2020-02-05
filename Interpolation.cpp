@@ -303,7 +303,12 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
     PetscInt location; PetscScalar minimum;
     ierr = VecMin(rowSum, &location, &minimum); CHKERRQ(ierr);
     if (minimum == 0.0)
-      SETERRQ2(comm, PETSC_ERR_FP, "Fine node #%i in interpolation matrix %i is not attached to any coarse nodes", location, i);
+    {
+      this->PR.resize(i);
+      break;
+      ierr = PetscPrintf(comm, "Fine node #%i in interpolation matrix %i is ", location, i); CHKERRQ(ierr);
+      ierr = PetscPrintf(comm, " not attached to any coarse nodes, restricting to %i levels", i); CHKERRQ(ierr);
+    }
     ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
     ierr = MatDiagonalScale(this->PR[i], rowSum, NULL); CHKERRQ(ierr);
     ierr = VecDestroy(&rowSum); CHKERRQ(ierr);

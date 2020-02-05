@@ -241,7 +241,7 @@ public:
                          ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
   PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
                     int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                    ArrayXPI *cList, int mg_levels );
+                    ArrayXPI *cList, int &mg_levels );
   idx_t ReorderParMetis( bool Reorder_Mesh,
                   idx_t nparts = 0, idx_t ncommonnodes = 0, double *tpwgts = NULL,
                   double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,

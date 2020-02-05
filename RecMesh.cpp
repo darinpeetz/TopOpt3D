@@ -602,7 +602,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
 /*****************************************************************/
 PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
                  int padding, int nInterfaceNodes, ArrayXPI *I,
-                 ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels )
+                 ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int &mg_levels )
 {
   PetscErrorCode ierr = 0;
   /// elem validity should be of size nLocElem, padding is the number of
@@ -1036,6 +1036,8 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     I[level].conservativeResize(IJKind); J[level].conservativeResize(IJKind);
     K[level].conservativeResize(IJKind);
     cList[level].conservativeResize(cind);
+    if (cind == 0)
+      mg_levels = level;
   }
 
   /// Reset element distribution array
@@ -1057,6 +1059,8 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 
   // Set preallocation
   ArrayXPI onDiag = ArrayXPI::Ones(this->nLocElem);
+  if (this->elmdist(myid) == this->elmdist(this->myid+1)) // No elements left on this process
+    onDiag.setZero();
   ArrayXPI offDiag = ArrayXPI::Ones(this->nLocElem);
   ierr = MatXAIJSetPreallocation(Proj, 1, onDiag.data(),
                                  offDiag.data(), 0, 0); CHKERRQ(ierr);
@@ -1107,6 +1111,11 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   ierr = VecDestroy(&Ones); CHKERRQ(ierr);
 
   // Reset global and local element counts
+  if (this->verbose >= 2)
+  {
+    ierr = PetscPrintf(this->comm, "Reduced from %i to %i elements through domain restriction\n",
+                       this->nElem, this->elmdist(this->nprocs)); CHKERRQ(ierr);
+  }
   nLocElem = element.rows();
   nElem = elmdist(nprocs);
 
