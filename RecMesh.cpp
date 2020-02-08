@@ -854,7 +854,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   }
 
   // Container to use for communications with adjacent processes
-  ArrayXPI Receptacle = ArrayXPI::Zero(2*nInterfaceNodes);
+  ArrayXPI Receptacle = ArrayXPI::Zero(4*nInterfaceNodes);
   // Share validity of edge nodes if this process has any, pass through otherwise
   MPI_Status sendStat1, sendStat2, recStat1, recStat2;
   if (nLocNode > 0)
@@ -862,42 +862,42 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     if (myid > 0 && myid != nprocs-1)
     {
       // Upward send
-      MPI_Isend(newNodeNumber.data()+nLocNode, nInterfaceNodes,
+      MPI_Isend(newNodeNumber.data()+nLocNode, 2*nInterfaceNodes,
                 MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
       sR1 = 0;
       // Downward send
-      MPI_Isend(newNodeNumber.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 1, comm, &sendReq2);
       sR2 = 0;
       // Receive from below
-      MPI_Irecv(Receptacle.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 0, comm, &recReq1);
       rR1 = 0;
       // Receive from above
-      MPI_Irecv(Receptacle.data()+nInterfaceNodes, nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
                 myid+1, 1, comm, &recReq2);
       rR2 = 0;
     }
     else if (myid == 0)
     {
       // Upward send
-      MPI_Isend(newNodeNumber.data()+nLocNode, nInterfaceNodes,
+      MPI_Isend(newNodeNumber.data()+nLocNode-nInterfaceNodes, 2*nInterfaceNodes,
                 MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
       sR1 = 0;
       // Receive from above
-      MPI_Irecv(Receptacle.data()+nInterfaceNodes, nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
                 myid+1, 1, comm, &recReq2);
       rR2 = 0;
 
     }
-    else
+    else // last process
     {
       // Downward send
-      MPI_Isend(newNodeNumber.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 1, comm, &sendReq2);
       sR2 = 0;
       // Receive from below
-      MPI_Irecv(Receptacle.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 0, comm, &recReq1);
       rR1 = 0;
     }
@@ -917,9 +917,9 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
         if (rR1 == 1) // Just got the message from below
         {
           // Combine indicators from both processes
-          newNodeNumber.segment(nInterfaceNodes, nInterfaceNodes) =
-            newNodeNumber.segment(nInterfaceNodes, nInterfaceNodes).max(
-            Receptacle.segment(0,nInterfaceNodes) );
+          newNodeNumber.segment(0, 2*nInterfaceNodes) =
+            newNodeNumber.segment(0, 2*nInterfaceNodes).max(
+            Receptacle.segment(0, 2*nInterfaceNodes) );
         }
       }
       if (rR2 == 0)
@@ -929,9 +929,9 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
         {
           // Combine indicators from both processes
           newNodeNumber.segment(newNodeNumber.size()-2*nInterfaceNodes,
-                                nInterfaceNodes) = newNodeNumber.segment
-            (newNodeNumber.size()-2*nInterfaceNodes, nInterfaceNodes).max
-            (Receptacle.segment(nInterfaceNodes,nInterfaceNodes) );
+                                2*nInterfaceNodes) = newNodeNumber.segment
+            (newNodeNumber.size()-2*nInterfaceNodes, 2*nInterfaceNodes).max
+            (Receptacle.segment(2*nInterfaceNodes, 2*nInterfaceNodes) );
         }
       }
     } while (!(sR1 && sR2 && rR1 && rR2));
@@ -940,35 +940,35 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   {
     // this process owns no nodes currently - receive from adjacent
     // processes and pass through
-    ArrayXPI zeros = ArrayXPI::Zero(nInterfaceNodes);
+    ArrayXPI zeros = ArrayXPI::Zero(2*nInterfaceNodes);
     if (myid == 0)
     {
       rR1 = 1; sR1 = 0; rR2 = 0; sR2 = 1;
       // Upward send
-      MPI_Isend(zeros.data(), nInterfaceNodes,
+      MPI_Isend(zeros.data(), 2*nInterfaceNodes,
                 MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
       // Receive from above
-      MPI_Irecv(Receptacle.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid+1, 1, comm, &recReq2);
     }
     else if (myid == nprocs-1)
     {
       rR2 = 1; sR2 = 0; rR1 = 0; sR1 = 1;
       // Downward send
-      MPI_Isend(zeros.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Isend(zeros.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 1, comm, &sendReq2);
       // Receive from below
-      MPI_Irecv(Receptacle.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 0, comm, &recReq1);
     }
     else
     {
       rR2 = 0; sR2 = 0; rR1 = 0; sR1 = 0;
       // Receive from above
-      MPI_Irecv(Receptacle.data()+nInterfaceNodes, nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
                 myid+1, 1, comm, &recReq2);
       // Receive from below
-      MPI_Irecv(Receptacle.data(), nInterfaceNodes, MPI_PETSCINT,
+      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
                 myid-1, 0, comm, &recReq1);
     }
 
@@ -979,7 +979,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
         if (rR1 == 1) // Just got the message from below
         {
           // Upward send
-          MPI_Isend(Receptacle.data(), nInterfaceNodes,
+          MPI_Isend(Receptacle.data(), 2*nInterfaceNodes,
                     MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
           sR1 = 0;
         }
@@ -994,7 +994,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
         if (rR2 == 1) // Just got the message from above
         {
           // Downward send
-          MPI_Isend(Receptacle.data()+nInterfaceNodes, nInterfaceNodes,
+          MPI_Isend(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes,
                     MPI_PETSCINT, myid-1, 1, comm, &sendReq2);
           sR2 = 0;
         }
