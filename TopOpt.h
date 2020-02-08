@@ -7,7 +7,10 @@
 #include "MMA.h"
 #include "Functions.h"
 
-typedef int idx_t;
+extern "C"
+{
+  #include <parmetis.h>
+}
 
 typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
 typedef Eigen::Array<PetscInt, -1,  1> ArrayXPI;
@@ -243,8 +246,8 @@ public:
                     int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                     ArrayXPI *cList, int &mg_levels );
   idx_t ReorderParMetis( bool Reorder_Mesh,
-                  idx_t nparts = 0, idx_t ncommonnodes = 0, double *tpwgts = NULL,
-                  double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
+                  idx_t nparts = 0, idx_t ncommonnodes = 0, real_t *tpwgts = NULL,
+                  real_t *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
                   idx_t *elmwgt = NULL, idx_t wgtflag = 0, idx_t numflag = 0 );
 
   PetscErrorCode ElemDist(Eigen::Array<idx_t, -1, 1> &partition);

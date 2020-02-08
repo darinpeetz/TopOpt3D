@@ -8,10 +8,10 @@
 #include "TopOpt.h"
 #include "EigLab.h"
 
-extern "C"
-{
-  #include <parmetis.h>
-}
+//extern "C"
+//{
+//  #include <parmetis.h>
+//}
 
 using namespace std;
 
@@ -369,6 +369,11 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
 {
   PetscErrorCode ierr = 0;
 
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Generating mesh\n"); CHKERRQ(ierr);
+  }
+
   this->SetDimension(Nel.size());
   Nel.conservativeResize(3);
   for (int i = numDims; i < 3; i++)
@@ -460,6 +465,12 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, elmdist.data(), 1, MPI_PETSCINT, comm);
   elmdist(nprocs) = nElem;
 
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated %i elements\n",
+                        this->nElem); CHKERRQ(ierr);
+  }
+
   /// Create the filter
   // dx is edgelength of elements in each direction
   double dx[3] = {0, 0, 0};
@@ -471,8 +482,18 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
   ierr = RecFilter(first, last, dx, Rmin, Nel, this->P); CHKERRQ(ierr);
 
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated min scale filter\n"); CHKERRQ(ierr);
+  }
+
   // Maximum length scale filter
   ierr = RecFilter(first, last, dx, Rmax, Nel, this->R, 1); CHKERRQ(ierr);
+
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated max scale filter\n"); CHKERRQ(ierr);
+  }
 
   // Create the geometric coarse-grid restrictions
   ArrayXPI I[mg_levels-1], J[mg_levels-1], cList[mg_levels-1];
@@ -521,6 +542,12 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
     this->node.col(2) = temp;
   }
 
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated %i nodes\n",
+                        this->nNode); CHKERRQ(ierr);
+  }
+
   // Undo changes to range information
   if (myid != 0)
       first[this->numDims-1]--;
@@ -561,22 +588,46 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   Eigen::Array<bool, -1, 1> elemValidity = Eigen::Array<bool, -1, 1>::Ones(nLocElem);
   Domain(elemCenters, elemValidity);
 
+   if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Elements have been marked for removal\n");
+                        CHKERRQ(ierr);
+  } 
+
   // Trim domain
   int nInterfaceNodes = 1;
   for (int dim = 1; dim < numDims; dim++)
     nInterfaceNodes *= Nel(dim-1)+1;
   ApplyDomain(elemValidity, padding, nInterfaceNodes, I, J, K, cList, mg_levels);
 
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully trimmed domain "
+                        "to %i elements and %i nodes\n", this->nElem, this->nNode); CHKERRQ(ierr);
+  }
+
   /// Get a better distribution of elements
   ReorderParMetis(Reorder_Mesh);
   double temp = elemSize(0);
   elemSize.setConstant(nLocElem, temp);
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully redistributed elements\n"); CHKERRQ(ierr);
+  }
 
   /// Node Distribution and Interpolation reordering
   NodeDist(I, J, K, cList, mg_levels);
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully redistributed nodes\n"); CHKERRQ(ierr);
+  }
 
   /// Interpolation matrix assembly
   ierr = Assemble_Interpolation ( I, J, K, cList, mg_levels, min_size );
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully assembled GMG operators\n"); CHKERRQ(ierr);
+  }
 
   /// Establish Global Numbering
   gElem = ArrayXPI::LinSpaced(this->nLocElem, elmdist(myid), elmdist(myid+1)-1);
@@ -587,12 +638,21 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   /// Get any needed ghost information
   Expand_Elem();
   Expand_Node();
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully added ghost nodes/elements\n"); CHKERRQ(ierr);
+  }
 
   /// Assign Ghost Info and create DV vectors
   ierr = Initialize_Vectors(); CHKERRQ(ierr);
 
   /// Local Element Numbering
   Localize();
+
+  if (this->verbose >= 3)
+  {
+    ierr = PetscFPrintf(this->comm, this->output, "Mesh generation complete\n"); CHKERRQ(ierr);
+  }
 
   return 0;
 }
@@ -1111,7 +1171,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   ierr = VecDestroy(&Ones); CHKERRQ(ierr);
 
   // Reset global and local element counts
-  if (this->verbose >= 2)
+  if (this->verbose >= 1)
   {
     ierr = PetscPrintf(this->comm, "Reduced from %i to %i elements through domain restriction\n",
                        this->nElem, this->elmdist(this->nprocs)); CHKERRQ(ierr);
@@ -1139,7 +1199,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 /**               Get partitioning with ParMetis                **/
 /*****************************************************************/
 idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
-            idx_t ncommonnodes, double *tpwgts, double *ubvec,
+            idx_t ncommonnodes, real_t *tpwgts, real_t *ubvec,
             idx_t *opts, idx_t ncon, idx_t *elmwgt, idx_t wgtflag,
             idx_t numflag )
 {
@@ -1184,7 +1244,7 @@ idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
   {
     ubvec = new real_t[ncon];
     for (int i = 0; i < ncon; i++)
-      ubvec[i] = 1.05+(double)nparts/nElem;
+      ubvec[i] = 1.05+(real_t)nparts/nElem;
   }
 
   if (opts == NULL)                         //0 for default options
@@ -1192,7 +1252,7 @@ idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
 
   if (tpwgts == NULL)                //Vertex weight in each subdomain
   {
-    tpwgts = new double[ncon*nparts];
+    tpwgts = new real_t[ncon*nparts];
     for (int i = 0; i < nparts; i++)
     {
       for (int j = 0; j < ncon; j++)
