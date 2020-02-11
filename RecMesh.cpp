@@ -480,7 +480,9 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
     dx[i] = (dimensions(2*i+1) - dimensions(2*i))/Nel(i);
     elemSize *= dx[i];
   }
-  ierr = RecFilter(first, last, dx, Rmin, Nel, this->P); CHKERRQ(ierr);
+  ArrayXPI MinFI, MinFJ, MaxFI, MaxFJ;
+  ArrayXPS MinFK, MaxFK;
+  ierr = RecFilter(first, last, dx, Rmin, Nel, MinFI, MinFJ, MinFK); CHKERRQ(ierr);
 
   if (this->verbose >= 3)
   {
@@ -488,7 +490,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
 
   // Maximum length scale filter
-  ierr = RecFilter(first, last, dx, Rmax, Nel, this->R, 1); CHKERRQ(ierr);
+  ierr = RecFilter(first, last, dx, Rmax, Nel, MaxFI, MaxFJ, MaxFK, 1); CHKERRQ(ierr);
 
   if (this->verbose >= 3)
   {
@@ -598,7 +600,8 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   int nInterfaceNodes = 1;
   for (int dim = 1; dim < numDims; dim++)
     nInterfaceNodes *= Nel(dim-1)+1;
-  ApplyDomain(elemValidity, padding, nInterfaceNodes, I, J, K, cList, mg_levels);
+  ApplyDomain(elemValidity, padding, nInterfaceNodes, MinFI, MinFJ, MinFK,
+              MaxFI, MaxFJ, MaxFK, I, J, K, cList, mg_levels);
 
   if (this->verbose >= 3)
   {
@@ -607,7 +610,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
 
   /// Get a better distribution of elements
-  ReorderParMetis(Reorder_Mesh);
+  ReorderParMetis(Reorder_Mesh, MinFI, MinFJ, MinFK, MaxFI, MaxFJ, MaxFK);
   double temp = elemSize(0);
   elemSize.setConstant(nLocElem, temp);
   if (this->verbose >= 3)
@@ -623,7 +626,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
 
   /// Interpolation matrix assembly
-  ierr = Assemble_Interpolation ( I, J, K, cList, mg_levels, min_size );
+  ierr = Assemble_Interpolation(I, J, K, cList, mg_levels, min_size);
   if (this->verbose >= 3)
   {
     ierr = PetscFPrintf(this->comm, this->output, "Successfully assembled GMG operators\n"); CHKERRQ(ierr);
@@ -646,6 +649,22 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   /// Assign Ghost Info and create DV vectors
   ierr = Initialize_Vectors(); CHKERRQ(ierr);
 
+  /// Assemble Filter matrices
+  ierr = Assemble_Filter(this->P, MinFI, MinFJ, MinFK, true); CHKERRQ(ierr);
+  ierr = Assemble_Filter(this->R, MaxFI, MaxFJ, MaxFK, false); CHKERRQ(ierr);
+
+  // Create a vector of how many fewer elements edge elements have in
+  // their max length scale radius
+  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
+  ierr = MatGetRowSum(this->R, this->REdge); CHKERRQ(ierr);
+  PetscScalar rowSumMax;
+  ierr = VecMax(this->REdge, NULL, &rowSumMax); CHKERRQ(ierr);
+  Vec Rtemp;
+  ierr = VecDuplicate(this->REdge, &Rtemp); CHKERRQ(ierr);
+  ierr = VecSet(Rtemp, rowSumMax); CHKERRQ(ierr);
+  ierr = VecAYPX(this->REdge, -1, Rtemp); CHKERRQ(ierr);
+  ierr = VecDestroy(&Rtemp); CHKERRQ(ierr);
+
   /// Local Element Numbering
   Localize();
 
@@ -661,7 +680,9 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
 /**                  Cut Mesh if necessary                      **/
 /*****************************************************************/
 PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
-                 int padding, int nInterfaceNodes, ArrayXPI *I,
+                 int padding, int nInterfaceNodes, ArrayXPI &MinFI,
+                 ArrayXPI &MinFJ, ArrayXPS &MinFK, ArrayXPI &MaxFI,
+                 ArrayXPI &MaxFJ, ArrayXPS &MaxFK, ArrayXPI *I,
                  ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int &mg_levels )
 {
   PetscErrorCode ierr = 0;
@@ -1099,6 +1120,69 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     if (cind == 0)
       mg_levels = level;
   }
+  allNodeNumber.resize(0); // Free up the space
+
+  /// Use a global Vec with ghost nodes to drop elements from Filters
+  PetscInt ghostStart = std::min(MinFJ.minCoeff(), MaxFJ.minCoeff());
+  PetscInt ghostEnd   = std::max(MinFJ.maxCoeff(), MaxFJ.maxCoeff());
+  PetscInt nGhost = ghostEnd-ghostStart - (elmdist(myid+1)-elmdist(myid)) + 1;
+  ArrayXPI ghost  = ArrayXPI::Zero(nGhost);
+  ghost.segment(0, elmdist(myid)-ghostStart) = ArrayXPI::LinSpaced(elmdist(myid)-ghostStart, ghostStart, elmdist(myid)-1);
+  ghost.segment(elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
+                                               ArrayXPI::LinSpaced(ghostEnd-elmdist(myid+1)+1, elmdist(myid+1), ghostEnd);
+
+  Vec Elimination;
+  PetscScalar *E_data;
+  ierr = VecCreateGhost(this->comm, this->nLocElem, this->nElem, nGhost, ghost.data(), &Elimination); CHKERRQ(ierr);
+  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
+  Eigen::Map< ArrayXPS > VecMap(E_data, nLocElem + nGhost);
+  VecMap.segment(0, nLocElem) = newElemNumber.cast<PetscScalar>();
+  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
+  ierr = VecGhostUpdateBegin(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+
+  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
+  new (&VecMap) Eigen::Map< ArrayXPS >(E_data, nLocElem + nGhost);
+  ArrayXPI allElemNumber = ArrayXPI::Zero(nGhost + nLocElem);
+  allElemNumber.segment(0, elmdist(myid)-ghostStart) = VecMap.segment(nLocElem, elmdist(myid)-ghostStart).cast<PetscInt>();
+  allElemNumber.segment(elmdist(myid)-ghostStart, nLocElem) = VecMap.segment(0, nLocElem).cast<PetscInt>();
+  allElemNumber.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
+                VecMap.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1).cast<PetscInt>();
+  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
+
+  int ind = 0;
+  for (int i = 0; i < MinFI.size(); i++)
+  {
+    PetscInt newI = allElemNumber(MinFI(i) - ghostStart);
+    PetscInt newJ = allElemNumber(MinFJ(i) - ghostStart);
+    if (newI > 0 and newJ > 0)
+    {
+      MinFI(ind) = newI-1;
+      MinFJ(ind) = newJ-1;
+      MinFK(ind) = MinFK(i);
+      ind++;
+    }
+  }
+  MinFI.conservativeResize(ind);
+  MinFJ.conservativeResize(ind);
+  MinFK.conservativeResize(ind);
+
+  ind = 0;
+  for (int i = 0; i < MaxFI.size(); i++)
+  {
+    PetscInt newI = allElemNumber(MaxFI(i) - ghostStart);
+    PetscInt newJ = allElemNumber(MaxFJ(i) - ghostStart);
+    if (newI > 0 and newJ > 0)
+    {
+      MaxFI(ind) = newI-1;
+      MaxFJ(ind) = newJ-1;
+      MaxFK(ind) = MaxFK(i);
+      ind++;
+    }
+  }
+  MaxFI.conservativeResize(ind);
+  MaxFJ.conservativeResize(ind);
+  MaxFK.conservativeResize(ind);
 
   /// Reset element distribution array
   number(this->myid) = elmdist(this->myid); // Save this value for assembling Proj below
@@ -1107,68 +1191,6 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, elmdist.data()+1, 1, MPI_PETSCINT, comm);
   for (int id = 1; id <= nprocs; id++)
     elmdist(id) += elmdist(id-1);
-
-  /// Remove elements from the filter using projection matrices
-  Mat Proj;
-  ierr = MatCreate(comm, &Proj); CHKERRQ(ierr);
-  ierr = MatSetSizes(Proj, this->nLocElem,
-                     this->elmdist(myid+1)-this->elmdist(myid),
-                     PETSC_DETERMINE, PETSC_DETERMINE); CHKERRQ(ierr);
-  ierr = MatSetOptionsPrefix(Proj, "Proj_"); CHKERRQ(ierr);
-  ierr = MatSetFromOptions(Proj); CHKERRQ(ierr);
-
-  // Set preallocation
-  ArrayXPI onDiag = ArrayXPI::Ones(this->nLocElem);
-  if (this->elmdist(myid) == this->elmdist(this->myid+1)) // No elements left on this process
-    onDiag.setZero();
-  ArrayXPI offDiag = ArrayXPI::Ones(this->nLocElem);
-  ierr = MatXAIJSetPreallocation(Proj, 1, onDiag.data(),
-                                 offDiag.data(), 0, 0); CHKERRQ(ierr);
-
-  // Set 1's for each element that remains
-  PetscInt newEl = this->elmdist(this->myid);
-  for (int el = 0; el < elemValidity.size(); el++)
-  {
-    if (elemValidity(el))
-    {
-      ierr = MatSetValue(Proj, el + number(this->myid),
-                         newEl++, 1.0, INSERT_VALUES); CHKERRQ(ierr);
-    }
-  }
-  ierr = MatAssemblyBegin(Proj, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-  ierr = MatAssemblyEnd(Proj, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-
-  Mat tempMat;
-  ierr = MatPtAP(this->P, Proj, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
-  ierr = MatDestroy(&this->P); CHKERRQ(ierr);
-  this->P = tempMat;
-  tempMat = NULL;
-  ierr = MatPtAP(this->R, Proj, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
-  ierr = MatDestroy(&this->R); CHKERRQ(ierr);
-  this->R = tempMat;
-  ierr = MatDestroy(&Proj); CHKERRQ(ierr);
-
-  // Create a vector of how many fewer elements edge elements have in
-  // their max length scale radius
-  ierr = MatCreateVecs(this->R, NULL, &this->REdge); CHKERRQ(ierr);
-  ierr = MatGetRowSum(this->R, this->REdge); CHKERRQ(ierr);
-  PetscScalar rowSumMax;
-  ierr = VecMax(this->REdge, NULL, &rowSumMax); CHKERRQ(ierr);
-  Vec Rtemp;
-  ierr = VecDuplicate(this->REdge, &Rtemp); CHKERRQ(ierr);
-  ierr = VecSet(Rtemp, rowSumMax); CHKERRQ(ierr);
-  ierr = VecAYPX(this->REdge, -1, Rtemp); CHKERRQ(ierr);
-  ierr = VecDestroy(&Rtemp); CHKERRQ(ierr);
-
-  // Scale Rows of the minimum length filter matrix
-  Vec rowSum, Ones;
-  ierr = MatCreateVecs(P, &rowSum, &Ones); CHKERRQ(ierr);
-  ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
-  ierr = MatGetRowSum(P, rowSum); CHKERRQ(ierr);
-  ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
-  ierr = MatDiagonalScale(P, rowSum, NULL); CHKERRQ(ierr);
-  ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
-  ierr = VecDestroy(&Ones); CHKERRQ(ierr);
 
   // Reset global and local element counts
   if (this->verbose >= 1)
@@ -1198,34 +1220,40 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 /*****************************************************************/
 /**               Get partitioning with ParMetis                **/
 /*****************************************************************/
-idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
-            idx_t ncommonnodes, real_t *tpwgts, real_t *ubvec,
-            idx_t *opts, idx_t ncon, idx_t *elmwgt, idx_t wgtflag,
-            idx_t numflag )
+idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh,
+                               ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                               ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
+                               idx_t nparts, idx_t ncommonnodes, real_t *tpwgts,
+                               real_t *ubvec, idx_t *opts, idx_t ncon,
+                               idx_t *elmwgt, idx_t wgtflag, idx_t numflag )
 {
   PetscErrorCode ierr = 0;
 
-  /// ParMetis won't work if some processors have zero elements, so perform
-  /// an initial redistribution
   Eigen::Array<idx_t, -1, 1> partition =
     myid*Eigen::Array<idx_t, -1, 1>::Ones(nLocElem);
-  ArrayXPI checkpoints = ArrayXPI::LinSpaced(nprocs+1, 0, nElem);
 
-  for (int i = 0; i < nprocs; i++)
+  if (Reorder_Mesh)
   {
-    if (checkpoints(i+1) < elmdist(myid))
-      continue;
-    else if (checkpoints(i) >= elmdist(myid+1))
-      break;
-    else
-      partition.segment(max((PetscInt)0, checkpoints(i)-elmdist(myid)),
-                    min(min(min(checkpoints(i+1) - checkpoints(i),
-                                elmdist(myid+1) - checkpoints(i)),
-                                checkpoints(i+1) - elmdist(myid)),
-                                elmdist(myid+1) - elmdist(myid)) ).setConstant(i);
-  }
-  ElemDist(partition);
+    /// ParMetis won't work if some processors have zero elements, so perform
+    /// an initial redistribution
+    ArrayXPI checkpoints = ArrayXPI::LinSpaced(nprocs+1, 0, nElem);
 
+    for (int i = 0; i < nprocs; i++)
+    {
+      if (checkpoints(i+1) < elmdist(myid))
+        continue;
+      else if (checkpoints(i) >= elmdist(myid+1))
+        break;
+      else
+        partition.segment(max((PetscInt)0, checkpoints(i)-elmdist(myid)),
+                      min(min(min(checkpoints(i+1) - checkpoints(i),
+                                  elmdist(myid+1) - checkpoints(i)),
+                                  checkpoints(i+1) - elmdist(myid)),
+                                  elmdist(myid+1) - elmdist(myid)) ).setConstant(i);
+    }
+    ElemDist(partition, MinFI, MinFJ, MinFK, MaxFI, MaxFJ, MaxFK);
+  }
+  
   /// Verify Inputs
   if (nparts <= 0)
     nparts = nprocs;
@@ -1285,7 +1313,7 @@ idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
     return METIS;
   }
 
-  ierr = ElemDist(partition); CHKERRQ(ierr);
+  ierr = ElemDist(partition, MinFI, MinFJ, MinFK, MaxFI, MaxFJ, MaxFK); CHKERRQ(ierr);
 
   return ierr;
 }
@@ -1293,120 +1321,224 @@ idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh, idx_t nparts,
 /*****************************************************************/
 /**                    Redistribute elements                    **/
 /*****************************************************************/
-PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition)
+PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
+                                ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                                ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK)
 {
-    PetscErrorCode ierr = 0;
-    /// Reallocate elements
-    /// Note abbreviations: senddisp = first element in array sent to each process
-    /// sendcnt = how many elements sent to each process - TO BE REMOVED
-    /// transferSize = how many elements each process is sending to the other processes
-    /// recvcnt = how many elements received from each process
-    /// recvdsp = beginning location of buffer to receive elements from each process
-    /// elmcpy = a copy of element reordered for continguous send buffers
-    /// where = after initial sorting, the local number of each element
-    /// permute = permutation vector for filter matrix (global)
-    // Initialize transfer Variables
-    short elementSize = pow(2,numDims);
-    ArrayXPI where = EigLab::gensort(partition).cast<PetscInt>();
-    ArrayXXPI transferSize = ArrayXXPI::Zero(nprocs,nprocs);
-    ArrayXXPIRM elmcpy(element.rows(),element.cols());
-    for (PetscInt i = 0; i < partition.rows(); i++)
-    {
-      elmcpy.row(i) = element.row(where(i));
-      transferSize(partition(i),myid)++;
-    }
+  PetscErrorCode ierr = 0;
+  /// Reallocate elements
+  /// Note abbreviations: senddisp = first element in array sent to each process
+  /// sendcnt = how many elements sent to each process - TO BE REMOVED
+  /// transferSize = how many elements each process is sending to the other processes
+  /// recvcnt = how many elements received from each process
+  /// recvdsp = beginning location of buffer to receive elements from each process
+  /// elmcpy = a copy of element reordered for continguous send buffers
+  /// where = after initial sorting, the local number of each element
+  /// permute = permutation vector for filter matrix (global)
+  // Initialize transfer Variables
+  short elementSize = pow(2,numDims);
+  ArrayXPI where = EigLab::gensort(partition).cast<PetscInt>();
+  ArrayXXPI transferSize = ArrayXXPI::Zero(nprocs,nprocs);
+  ArrayXXPIRM elmcpy(element.rows(),element.cols());
+  for (PetscInt i = 0; i < partition.rows(); i++)
+  {
+    elmcpy.row(i) = element.row(where(i));
+    transferSize(partition(i),myid)++;
+  }
 
-    // How many elements are transferred between each pair of processes
-    MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
-                  nprocs, MPI_PETSCINT, comm);
-    Eigen::ArrayXi sendcnt = elementSize*transferSize.col(myid).cast<int>();
-    Eigen::ArrayXi recvcnt = elementSize*transferSize.row(myid).cast<int>();
+  // How many elements are transferred between each pair of processes
+  MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
+                nprocs, MPI_PETSCINT, comm);
+  Eigen::ArrayXi sendcnt = elementSize*transferSize.col(myid).cast<int>();
+  Eigen::ArrayXi recvcnt = elementSize*transferSize.row(myid).cast<int>();
 
-    // Offsets in sent messages
-    Eigen::ArrayXi senddsp = Eigen::ArrayXi::Zero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        senddsp(i) = sendcnt(i-1) + senddsp(i-1);
+  // Offsets in sent messages
+  Eigen::ArrayXi senddsp = Eigen::ArrayXi::Zero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      senddsp(i) = sendcnt(i-1) + senddsp(i-1);
 
-    // Offsets in received messages
-    Eigen::ArrayXi recvdsp = Eigen::ArrayXi::Zero(nprocs);
-    for (short i = 1; i < nprocs; i++)
-        recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
+  // Offsets in received messages
+  Eigen::ArrayXi recvdsp = Eigen::ArrayXi::Zero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
 
-    // The element transfer
-    element.resize(recvcnt.sum()/elementSize, elementSize);
-    MPI_Alltoallv(elmcpy.data(), sendcnt.data(), senddsp.data(),
-                  MPI_PETSCINT, element.data(), recvcnt.data(),
-                  recvdsp.data(), MPI_PETSCINT, comm);
+  // The element transfer
+  element.resize(recvcnt.sum()/elementSize, elementSize);
+  MPI_Alltoallv(elmcpy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCINT, element.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCINT, comm);
 
-    // Update distribution across processes
-    elmdist(myid+1) = element.rows();
-    nLocElem = element.rows();
-    MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, elmdist.data()+1,
-                  1, MPI_PETSCINT, comm);
-    for (short i = 1; i <= nprocs; i++)
-        elmdist(i) += elmdist(i-1);
+  // Reorder the indices of the filter matrices
+  // Permute = permutation vector, permute(i) = newi
+  // Indices = vector indicating where this process can start assigning Elements
+  //            on each process (i.e. global locations in the permute vector)
+  ArrayXPI permute = ArrayXPI::Zero(partition.size());
+  ArrayXPI indices = ArrayXPI::Zero(nprocs);
+  indices.segment(1,nprocs-1) = transferSize.block(0, 0, nprocs-1, nprocs)
+                                .rowwise().sum();
+  partial_sum(indices.data(), indices.data()+nprocs, indices.data());
+  indices += transferSize.block(0, 0, nprocs, myid).rowwise().sum();
+  for (PetscInt i = 0; i < partition.rows(); i++)
+  {
+    permute(where(i)) = indices(partition(i))++;
+  }
 
-    // Create global permutation array after sharing Elements
-    // This is currently assembling a global vector on all processes and reducing
-    // it.  The performance could possibly be improved by sharing the local parts
-    // and then assembling after transfer, thereby reducing communications.
-    // Permute = permutation vector, permute(i) = newi
-    // Indices = vector indicating where this process can start assigning Elements
-    //            on each process (i.e. global locations in the permute vector)
-    ArrayXPI permute = ArrayXPI::Zero(partition.size());
-    ArrayXPI indices = ArrayXPI::Zero(nprocs);
-    indices.segment(1,nprocs-1) = transferSize.block(0, 0, nprocs-1, nprocs)
-                                  .rowwise().sum();
-    partial_sum(indices.data(), indices.data()+nprocs, indices.data());
-    indices += transferSize.block(0, 0, nprocs, myid).rowwise().sum();
-    for (PetscInt i = 0; i < partition.rows(); i++)
-    {
-      permute(where(i)) = indices(partition(i))++;
-    }
+  /// Use a global Vec with ghost nodes to drop elements from Filters
+  PetscInt ghostStart, ghostEnd;
+  if (MinFJ.size() > 0) {
+    ghostStart = std::min(MinFJ.minCoeff(), MaxFJ.minCoeff());
+    ghostEnd   = std::max(MinFJ.maxCoeff(), MaxFJ.maxCoeff());
+  }
+  else {
+    ghostStart = elmdist(myid);
+    ghostEnd  = elmdist(myid+1)-1;
+  }
+  PetscInt nGhost = ghostEnd-ghostStart - (elmdist(myid+1)-elmdist(myid)) + 1;
+  ArrayXPI ghost  = ArrayXPI::Zero(nGhost);
+  ghost.segment(0, elmdist(myid)-ghostStart) =
+            ArrayXPI::LinSpaced(elmdist(myid)-ghostStart, ghostStart, elmdist(myid)-1);
+  ghost.segment(elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
+            ArrayXPI::LinSpaced(ghostEnd-elmdist(myid+1)+1, elmdist(myid+1), ghostEnd);
 
-    Mat Perm_Mat;
-    ierr = MatCreate(this->comm, &Perm_Mat); CHKERRQ(ierr);
-    PetscInt oldSize;
-    ierr = MatGetLocalSize(this->P, &oldSize, NULL);
-    ierr = MatSetSizes(Perm_Mat, oldSize, this->nLocElem,
-                       this->nElem, this->nElem); CHKERRQ(ierr);
-    ierr = MatSetOptionsPrefix(Perm_Mat, "Permute"); CHKERRQ(ierr);
-    ierr = MatSetFromOptions(Perm_Mat); CHKERRQ(ierr);
+  Vec Elimination;
+  PetscScalar *E_data;
+  ierr = VecCreateGhost(this->comm, this->nLocElem, this->nElem, nGhost, ghost.data(), &Elimination); CHKERRQ(ierr);
+  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
+  Eigen::Map< ArrayXPS > VecMap(E_data, nLocElem + nGhost);
+  VecMap.segment(0, nLocElem) = permute.cast<PetscScalar>();
+  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
+  ierr = VecGhostUpdateBegin(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+  ierr = VecGhostUpdateEnd(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
 
-    ArrayXPI onDiag = ArrayXPI::Constant(partition.size(), 2);
-    ArrayXPI offDiag = ArrayXPI::Constant(partition.size(), 2);
-    ierr = MatXAIJSetPreallocation(Perm_Mat, 1, onDiag.data(),
-                                   offDiag.data(), 0, 0); CHKERRQ(ierr);
+  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
+  new (&VecMap) Eigen::Map< ArrayXPS >(E_data, nLocElem + nGhost);
+  ArrayXPI allElemNumber = ArrayXPI::Zero(nGhost + nLocElem);
+  allElemNumber.segment(0, elmdist(myid)-ghostStart) = VecMap.segment(nLocElem, elmdist(myid)-ghostStart).cast<PetscInt>();
+  allElemNumber.segment(elmdist(myid)-ghostStart, nLocElem) = VecMap.segment(0, nLocElem).cast<PetscInt>();
+  allElemNumber.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
+                VecMap.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1).cast<PetscInt>();
+  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
 
-    // Set values of permutation matrix
-    PetscInt firstRow;
-    ierr = MatGetOwnershipRange(this->P, &firstRow, NULL); CHKERRQ(ierr);
-    for (int el = 0; el < partition.size(); el++)
-    {
-      ierr = MatSetValue(Perm_Mat, el+firstRow, permute(el), 1, ADD_VALUES); CHKERRQ(ierr);
-    }
-    ierr = MatAssemblyBegin(Perm_Mat, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
-    ierr = MatAssemblyEnd(Perm_Mat, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  for (int i = 0; i < MinFI.size(); i++)
+  {
+    MinFI(i) = allElemNumber(MinFI(i) - ghostStart);
+    MinFJ(i) = allElemNumber(MinFJ(i) - ghostStart);
+  }
 
-    // Permute Filter matrices
-    Mat tempMat;
-    ierr = MatPtAP(this->P, Perm_Mat, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
-    ierr = MatDestroy(&this->P); CHKERRQ(ierr);
-    this->P = tempMat;
-    tempMat = NULL;
-    ierr = MatPtAP(this->R, Perm_Mat, MAT_INITIAL_MATRIX, 1.0, &tempMat); CHKERRQ(ierr);
-    ierr = MatDestroy(&this->R); CHKERRQ(ierr);
-    this->R = tempMat;
+  for (int i = 0; i < MaxFI.size(); i++)
+  {
+    MaxFI(i) = allElemNumber(MaxFI(i) - ghostStart);
+    MaxFJ(i) = allElemNumber(MaxFJ(i) - ghostStart);
+  }
 
-    Vec tempVec;
-    ierr = MatCreateVecs(Perm_Mat, &tempVec, NULL); CHKERRQ(ierr);
-    ierr = MatMultTranspose(Perm_Mat, this->REdge, tempVec); CHKERRQ(ierr);
-    ierr = VecDestroy(&this->REdge); CHKERRQ(ierr);
-    this->REdge = tempVec;
+  // Update distribution across processes
+  elmdist(myid+1) = element.rows();
+  nLocElem = element.rows();
+  MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, elmdist.data()+1,
+                1, MPI_PETSCINT, comm);
+  for (short i = 1; i <= nprocs; i++)
+      elmdist(i) += elmdist(i-1);
 
-    ierr = MatDestroy(&Perm_Mat); CHKERRQ(ierr);
+  /// Move filter Triplets using same ideas as transferring elements
+  /// Minimum length filter first
+  // Initialize transfer Variables
+  ArrayXPI Fpartition = ArrayXPI::Zero(MinFI.size());
+  for (int i = 0; i < this->nprocs; i++)
+  {
+    Fpartition += (MinFI >= elmdist(i+1)).cast<PetscInt>();
+  }
+  where = EigLab::gensort(Fpartition).cast<PetscInt>();
+  transferSize.setZero(nprocs,nprocs);
+  ArrayXPI Icopy(MinFI.size()), Jcopy(MinFJ.size());
+  ArrayXPS Kcopy(MinFK.size());
+  for (PetscInt i = 0; i < Icopy.rows(); i++)
+  {
+    Icopy(i) = MinFI(where(i));
+    Jcopy(i) = MinFJ(where(i));
+    Kcopy(i) = MinFK(where(i));
+    transferSize(Fpartition(i),myid)++;
+  }
 
-    return ierr;
+  // How many elements are transferred between each pair of processes
+  MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
+                nprocs, MPI_PETSCINT, comm);
+  sendcnt = transferSize.col(myid).cast<int>();
+  recvcnt = transferSize.row(myid).cast<int>();
+
+  // Offsets in sent messages
+  senddsp.setZero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      senddsp(i) = sendcnt(i-1) + senddsp(i-1);
+
+  // Offsets in received messages
+  recvdsp.setZero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
+
+  // The element transfer
+  MinFI.resize(recvcnt.sum());
+  MinFJ.resize(recvcnt.sum());
+  MinFK.resize(recvcnt.sum());
+  MPI_Alltoallv(Icopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCINT, MinFI.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCINT, comm);
+  MPI_Alltoallv(Jcopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCINT, MinFJ.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCINT, comm);
+  MPI_Alltoallv(Kcopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCSCALAR, MinFK.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCSCALAR, comm);
+
+  /// Maximum length filter next
+  // Initialize transfer Variables
+  Fpartition.setZero(MaxFI.size());
+  for (int i = 0; i < this->nprocs; i++)
+  {
+    Fpartition += (MaxFI >= elmdist(i+1)).cast<PetscInt>();
+  }
+  where = EigLab::gensort(Fpartition).cast<PetscInt>();
+  transferSize.setZero(nprocs,nprocs);
+  Icopy.setZero(MaxFI.size()), Jcopy.setZero(MaxFJ.size());
+  Kcopy.setZero(MaxFK.size());
+  for (PetscInt i = 0; i < Icopy.rows(); i++)
+  {
+    Icopy(i) = MaxFI(where(i));
+    Jcopy(i) = MaxFJ(where(i));
+    Kcopy(i) = MaxFK(where(i));
+    transferSize(Fpartition(i),myid)++;
+  }
+
+  // How many elements are transferred between each pair of processes
+  MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, transferSize.data(),
+                nprocs, MPI_PETSCINT, comm);
+  sendcnt = transferSize.col(myid).cast<int>();
+  recvcnt = transferSize.row(myid).cast<int>();
+
+  // Offsets in sent messages
+  senddsp.setZero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      senddsp(i) = sendcnt(i-1) + senddsp(i-1);
+
+  // Offsets in received messages
+  recvdsp.setZero(nprocs);
+  for (short i = 1; i < nprocs; i++)
+      recvdsp(i) = recvcnt(i-1) + recvdsp(i-1);
+
+  // The element transfer
+  MaxFI.resize(recvcnt.sum());
+  MaxFJ.resize(recvcnt.sum());
+  MaxFK.resize(recvcnt.sum());
+  MPI_Alltoallv(Icopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCINT, MaxFI.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCINT, comm);
+  MPI_Alltoallv(Jcopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCINT, MaxFJ.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCINT, comm);
+  MPI_Alltoallv(Kcopy.data(), sendcnt.data(), senddsp.data(),
+                MPI_PETSCSCALAR, MaxFK.data(), recvcnt.data(),
+                recvdsp.data(), MPI_PETSCSCALAR, comm);
+
+  return ierr;
 }
 
 /*****************************************************************/
