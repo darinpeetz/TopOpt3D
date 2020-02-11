@@ -5,9 +5,6 @@
 
 using namespace std;
 
-typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
-typedef Eigen::Array<PetscInt, -1, 1> ArrayXPI;
-
 /********************************************************************
  *  This method produces a density filter on regular, rectangular grids
  * 
@@ -22,7 +19,8 @@ typedef Eigen::Array<PetscInt, -1, 1> ArrayXPI;
  *******************************************************************/
 PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
                                    double *dx, double R, ArrayXPI Nel,
-                                   Mat &Filter, PetscScalar nonzeros )
+                                   ArrayXPI &I, ArrayXPI &J,
+                                   ArrayXPS &K, PetscScalar nonzeros )
 {
   PetscErrorCode ierr = 0;
 
@@ -58,9 +56,9 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
 
   // Arrays of connected elements and their distances
   int filterInd = 0;
-  Eigen::Array<PetscInt, -1, 1> I(nLocElem*nNbrhd);
-  Eigen::Array<PetscInt, -1, 1> J(nLocElem*nNbrhd);
-  Eigen::Array<PetscScalar, -1, 1> K(nLocElem*nNbrhd);
+  I.resize(nLocElem*nNbrhd);
+  J.resize(nLocElem*nNbrhd);
+  K.resize(nLocElem*nNbrhd);
   // First three loops are over local elements
   for (int elk = first[2]; elk < last[2]; elk++)
   {
@@ -86,7 +84,7 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
                 // Add that element to list
                 I(filterInd) = el;
                 J(filterInd) = elemTemplate[ind]+el;
-                if (nonzeros)
+                if (nonzeros > 0)
                   K(filterInd) = nonzeros;
                 else
                   K(filterInd) = 1-dist[ind]/R;
@@ -103,12 +101,20 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
   J.conservativeResize(filterInd);
   K.conservativeResize(filterInd);
 
+  return ierr;
+}
+
+PetscErrorCode TopOpt::Assemble_Filter(Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
+                                       ArrayXPS &K, bool scale)
+{
+  PetscErrorCode ierr = 0;
+
   /// Assemble the filter matrix
-  ierr = MatCreate(comm, &Filter); CHKERRQ(ierr);
-  ierr = MatSetSizes(Filter, this->nLocElem, this->nLocElem,
+  ierr = MatCreate(comm, &Matrix); CHKERRQ(ierr);
+  ierr = MatSetSizes(Matrix, this->nLocElem, this->nLocElem,
                      this->nElem, this->nElem); CHKERRQ(ierr);
-  ierr = MatSetOptionsPrefix(Filter, "Filter_"); CHKERRQ(ierr);
-  ierr = MatSetFromOptions(Filter); CHKERRQ(ierr);
+  ierr = MatSetOptionsPrefix(Matrix, "Filter_"); CHKERRQ(ierr);
+  ierr = MatSetFromOptions(Matrix); CHKERRQ(ierr);
 
   // Set preallocation
   ArrayXPI onDiag = ArrayXPI::Zero(this->nLocElem);
@@ -127,31 +133,34 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
   }
 
   // Set the preallocation
-  ierr = MatXAIJSetPreallocation(Filter, 1, onDiag.data(),
+  ierr = MatXAIJSetPreallocation(Matrix, 1, onDiag.data(),
                                  offDiag.data(), 0, 0); CHKERRQ(ierr);
 
   // Insert values into matrix
   for (int el = 0; el < I.size(); el++)
   {
-    ierr = MatSetValue(Filter, I(el), J(el), K(el), ADD_VALUES); CHKERRQ(ierr);
+    ierr = MatSetValue(Matrix, I(el), J(el), K(el), ADD_VALUES); CHKERRQ(ierr);
   }
 
   // Begin assembly (finish just before returning from function)
-  ierr = MatAssemblyBegin(Filter, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyBegin(Matrix, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
   // Finish assembly of the matrix before continuing
-  ierr = MatAssemblyEnd(Filter, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
+  ierr = MatAssemblyEnd(Matrix, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
   // Scale Rows
-  Vec rowSum, Ones;
-  ierr = VecCreateMPI(comm, nLocElem, nElem, &rowSum); CHKERRQ(ierr);
-  ierr = VecDuplicate(rowSum, &Ones); CHKERRQ(ierr);
-  ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
-  ierr = MatGetRowSum(P, rowSum); CHKERRQ(ierr);
-  ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
-  ierr = MatDiagonalScale(P, rowSum, NULL); CHKERRQ(ierr);
-  ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
-  ierr = VecDestroy(&Ones); CHKERRQ(ierr);
-
+  if (scale)
+  {
+    Vec rowSum, Ones;
+    ierr = VecCreateMPI(comm, nLocElem, nElem, &rowSum); CHKERRQ(ierr);
+    ierr = VecDuplicate(rowSum, &Ones); CHKERRQ(ierr);
+    ierr = VecSet(Ones, 1.0); CHKERRQ(ierr);
+    ierr = MatGetRowSum(Matrix, rowSum); CHKERRQ(ierr);
+    ierr = VecPointwiseDivide(rowSum, Ones, rowSum); CHKERRQ(ierr);
+    ierr = MatDiagonalScale(Matrix, rowSum, NULL); CHKERRQ(ierr);
+    ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
+    ierr = VecDestroy(&Ones); CHKERRQ(ierr);
+  }
+  
   return ierr;
 }

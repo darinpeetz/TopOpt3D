@@ -520,8 +520,10 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
     {
       if (!line.compare("[/Domain]"))
       {
-        elemValidity.setOnes(Points.rows());
-        elemValidity = (D.col(D.cols()-1) < 0.0);
+        if (D.cols() == 0) // No domain info specified
+          elemValidity.setOnes(Points.rows());
+        else
+          elemValidity = (D.col(D.cols()-1) < 0.0);
         return ierr;
       }
       else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
@@ -577,7 +579,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Centers for Cylinder are specified incorrectly\n";
             center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
@@ -586,7 +588,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Axis vectors for Cylinder are specified incorrectly\n";
             normal = Eigen::Map<VectorXPS>(temp.data(), temp.size());
             continue;
@@ -619,7 +621,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Lower bounds for hexahedron are specified incorrectly\n";
             low = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
@@ -628,7 +630,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Upper bounds for hexahedron are specified incorrectly\n";
             up = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
@@ -650,7 +652,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Base coordinates for plane are specified incorrectly\n";
             base = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
@@ -659,7 +661,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
           {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
-            if (temp.size() != (unsigned short)numDims)
+            if (temp.size() < (unsigned short)numDims)
               cout << "Normal coordinates for plane are specified incorrectly\n";
             normal = Eigen::Map<VectorXPS>(temp.data(), temp.size());
             continue;
