@@ -1123,8 +1123,17 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   allNodeNumber.resize(0); // Free up the space
 
   /// Use a global Vec with ghost nodes to drop elements from Filters
-  PetscInt ghostStart = std::min(MinFJ.minCoeff(), MaxFJ.minCoeff());
-  PetscInt ghostEnd   = std::max(MinFJ.maxCoeff(), MaxFJ.maxCoeff());
+  PetscInt ghostStart, ghostEnd;
+  if (MinFJ.size() > 0)
+  {
+    ghostStart = std::min(MinFJ.minCoeff(), MaxFJ.minCoeff());
+    ghostEnd   = std::max(MinFJ.maxCoeff(), MaxFJ.maxCoeff());
+  }
+  else
+  {
+    ghostStart = elmdist(myid);
+    ghostEnd = elmdist(myid+1)-1;
+  }
   PetscInt nGhost = ghostEnd-ghostStart - (elmdist(myid+1)-elmdist(myid)) + 1;
   ArrayXPI ghost  = ArrayXPI::Zero(nGhost);
   ghost.segment(0, elmdist(myid)-ghostStart) = ArrayXPI::LinSpaced(elmdist(myid)-ghostStart, ghostStart, elmdist(myid)-1);
