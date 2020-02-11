@@ -18,6 +18,7 @@ typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
+#define MPI_PETSCSCALAR MPIU_SCALAR
 
 enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, OTHER };
 enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC };
@@ -219,7 +220,7 @@ public:
 
   // Printing information
   PetscErrorCode MeshOut ( );
-  PetscErrorCode MeshOut (TopOpt *topOpt);
+  PetscErrorCode MeshOut ( TopOpt *topOpt );
   PetscErrorCode StepOut ( const double &f, const VectorXPS &cons,
                            int it, long nactive );
   PetscErrorCode ResultOut ( int it );
@@ -227,29 +228,40 @@ public:
 
   // Mesh Creation
   PetscErrorCode RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
-                   ArrayXPI Nel, Mat &Filter, PetscScalar nonzeros=0 );
-  PetscErrorCode LoadMesh(VectorXPS &xIni);
+                             ArrayXPI Nel, ArrayXPI &I, ArrayXPI &J,
+                             ArrayXPS &K, PetscScalar nonzeros=0 );
+  PetscErrorCode Assemble_Filter( Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
+                                  ArrayXPS &K, bool scale );
+  PetscErrorCode LoadMesh ( VectorXPS &xIni );
   PetscErrorCode CreateMesh ( VectorXPS dimensions, ArrayXPI Nel, double Rmin,
                               double Rmax, bool Reorder_Mesh, 
                               PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode Create_Interpolations( PetscInt *first, PetscInt *last,
-                      ArrayXPI Nel, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                      ArrayXPI *cList, PetscInt mg_levels );
-  PetscErrorCode Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
-              ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
+  PetscErrorCode Create_Interpolations ( PetscInt *first, PetscInt *last, ArrayXPI Nel,
+                                         ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                         ArrayXPI *cList, PetscInt mg_levels );
+  PetscErrorCode Create_Interpolation ( ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
+                                        ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
   PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                          ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity, int padding,
-                    int nInterfaceNodes, ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                    ArrayXPI *cList, int &mg_levels );
-  idx_t ReorderParMetis( bool Reorder_Mesh,
-                  idx_t nparts = 0, idx_t ncommonnodes = 0, double *tpwgts = NULL,
-                  double *ubvec = NULL, idx_t *opts = NULL, idx_t ncon = 1,
-                  idx_t *elmwgt = NULL, idx_t wgtflag = 0, idx_t numflag = 0 );
+  PetscErrorCode ApplyDomain ( Eigen::Array<bool, -1, 1> elemValidity, int padding,
+                               int nInterfaceNodes,
+                               ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                               ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
+                               ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                               ArrayXPI *cList, int &mg_levels );
+  idx_t ReorderParMetis ( bool Reorder_Mesh, 
+                          ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                          ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
+                          idx_t nparts = 0, idx_t ncommonnodes = 0,
+                          double *tpwgts = NULL, double *ubvec = NULL, idx_t *opts = NULL,
+                          idx_t ncon = 1, idx_t *elmwgt = NULL, idx_t wgtflag = 0,
+                          idx_t numflag = 0 );
 
-  PetscErrorCode ElemDist(Eigen::Array<idx_t, -1, 1> &partition);
-  PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                          ArrayXPI *cList, int mg_levels);
+  PetscErrorCode ElemDist ( Eigen::Array<idx_t, -1, 1> &partition,
+                            ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                            ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK );
+  PetscErrorCode NodeDist ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                            ArrayXPI *cList, int mg_levels );
   PetscErrorCode Expand_Elem();
   PetscErrorCode Expand_Node();
   PetscErrorCode Initialize_Vectors();

@@ -18,8 +18,8 @@ namespace Domain
     MatrixXPS Offset = Nodes;
     for (int i = 0; i < Offset.cols(); i++)
       Offset.col(i).array() -= xc[i];
-    VectorXPS Axial = Offset * normal;
-    Offset -= Axial * normal.transpose();
+    VectorXPS Axial = Offset * normal.segment(0,Offset.cols());
+    Offset -= Axial * normal.segment(0,Offset.cols()).transpose();
     VectorXPS Transverse = Offset.cwiseProduct(Offset).rowwise().sum().cwiseSqrt().array() - r;
 
     return Transverse.array().cwiseMax(Axial.cwiseAbs().array()-h);
@@ -38,7 +38,7 @@ namespace Domain
     MatrixXPS Offset = Nodes;
     for (int i = 0; i < Offset.cols(); i++)
       Offset.col(i).array() -= base[i];
-    return (Offset * normal).array();
+    return (Offset * normal.segment(0,Offset.cols())).array();
   }
 
   ArrayXPS Union(const VectorXPS &d1, const VectorXPS &d2)
