@@ -1527,16 +1527,25 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
   ArrayXPI lo2hi = newElemNumber, hi2lo = newElemNumber;
   ArrayXPI lo2hi_buf = ArrayXPI::Zero(0), hi2lo_buf = ArrayXPI::Zero(0);
   int lo2hi_tag = 0, hi2lo_tag = 1;
-  MPI_Request lo2hi_req, hi2lo_req, final_req;
+  MPI_Request lo2hi_req, hi2lo_req;
   MPI_Status lo2hi_stat, hi2lo_stat;
   int lo2hi_tgt = this->myid+1, hi2lo_tgt = this->myid-1;
   int lo2hi_src = hi2lo_tgt, hi2lo_src = lo2hi_tgt;
   int lo2hi_cnt, hi2lo_cnt;
   PetscInt lo = this->myid;
   PetscInt hi = this->myid+1;
-  int imdone = 0, alldone = 0;
 
+  PetscInt down = 0, up = 0;
   for (int i = 0; i < this->nprocs; i++)
+  {
+    if (this->elmdist(i) > ghostStart && i <= this->myid)
+      down++;
+    else if (this->elmdist(i) <= ghostEnd && i > this->myid)
+      up++;
+  }
+  down = std::max(down, up);
+  ierr = MPI_Allreduce(MPI_IN_PLACE, &down, 1, MPI_PETSCINT, MPI_MAX, this->comm); CHKERRQ(ierr);
+  for (int i = 0; i < down; i++)
   {
     // Send up
     if (this->myid < this->nprocs-1) {
@@ -1585,20 +1594,9 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
     }
 
 
-    // Bookkeeping and checking for exit
+    // Bookkeeping/preparing for the next iteration
     lo = std::max(lo-1, 0);
     hi = std::min(hi+1, this->nprocs);
-    if (!imdone && this->elmdist(lo) <= ghostStart && this->elmdist(hi) > ghostEnd) {
-      ierr = MPI_Ibarrier(this->comm, &final_req); CHKERRQ(ierr);
-      imdone = 1;
-    }
-    ierr = MPI_Barrier(this->comm); CHKERRQ(ierr); // Necessary to prevent gridlock
-    if (imdone == 1){
-      ierr = MPI_Test(&final_req, &alldone, MPI_STATUS_IGNORE); CHKERRQ(ierr);
-    }
-
-    if (alldone != 0)
-      return ierr;
     hi2lo = hi2lo_buf; lo2hi = lo2hi_buf;
   }
   return ierr;
