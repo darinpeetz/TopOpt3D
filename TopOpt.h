@@ -263,6 +263,8 @@ public:
   PetscErrorCode ElemDist ( Eigen::Array<idx_t, -1, 1> &partition,
                             ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
                             ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK );
+  PetscErrorCode GetElemNumbers ( PetscInt ghostStart, PetscInt ghostEnd,
+                                  ArrayXPI &newElemNumber, ArrayXPI &allElemNumber );
   PetscErrorCode NodeDist ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                             ArrayXPI *cList, int mg_levels );
   PetscErrorCode Expand_Elem();

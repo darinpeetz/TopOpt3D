@@ -1122,7 +1122,7 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   }
   allNodeNumber.resize(0); // Free up the space
 
-  /// Use a global Vec with ghost nodes to drop elements from Filters
+  /// Get new element numbers for each triplet of the filter matrices
   PetscInt ghostStart, ghostEnd;
   if (MinFJ.size() > 0)
   {
@@ -1134,30 +1134,9 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     ghostStart = elmdist(myid);
     ghostEnd = elmdist(myid+1)-1;
   }
-  PetscInt nGhost = ghostEnd-ghostStart - (elmdist(myid+1)-elmdist(myid)) + 1;
-  ArrayXPI ghost  = ArrayXPI::Zero(nGhost);
-  ghost.segment(0, elmdist(myid)-ghostStart) = ArrayXPI::LinSpaced(elmdist(myid)-ghostStart, ghostStart, elmdist(myid)-1);
-  ghost.segment(elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
-                                               ArrayXPI::LinSpaced(ghostEnd-elmdist(myid+1)+1, elmdist(myid+1), ghostEnd);
-
-  Vec Elimination;
-  PetscScalar *E_data;
-  ierr = VecCreateGhost(this->comm, this->nLocElem, this->nElem, nGhost, ghost.data(), &Elimination); CHKERRQ(ierr);
-  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > VecMap(E_data, nLocElem + nGhost);
-  VecMap.segment(0, nLocElem) = newElemNumber.cast<PetscScalar>();
-  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
-  new (&VecMap) Eigen::Map< ArrayXPS >(E_data, nLocElem + nGhost);
-  ArrayXPI allElemNumber = ArrayXPI::Zero(nGhost + nLocElem);
-  allElemNumber.segment(0, elmdist(myid)-ghostStart) = VecMap.segment(nLocElem, elmdist(myid)-ghostStart).cast<PetscInt>();
-  allElemNumber.segment(elmdist(myid)-ghostStart, nLocElem) = VecMap.segment(0, nLocElem).cast<PetscInt>();
-  allElemNumber.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
-                VecMap.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1).cast<PetscInt>();
-  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
+  ArrayXPI allElemNumber = ArrayXPI::Zero(ghostEnd - ghostStart + 1);
+  ierr = GetElemNumbers(ghostStart, ghostEnd, newElemNumber,
+                        allElemNumber); CHKERRQ(ierr);
 
   int ind = 0;
   for (int i = 0; i < MinFI.size(); i++)
@@ -1392,7 +1371,7 @@ PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
     permute(where(i)) = indices(partition(i))++;
   }
 
-  /// Use a global Vec with ghost nodes to drop elements from Filters
+  /// Use a global Vec with ghost nodes to renumber filter matrix triplets
   PetscInt ghostStart, ghostEnd;
   if (MinFJ.size() > 0) {
     ghostStart = std::min(MinFJ.minCoeff(), MaxFJ.minCoeff());
@@ -1402,31 +1381,9 @@ PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
     ghostStart = elmdist(myid);
     ghostEnd  = elmdist(myid+1)-1;
   }
-  PetscInt nGhost = ghostEnd-ghostStart - (elmdist(myid+1)-elmdist(myid)) + 1;
-  ArrayXPI ghost  = ArrayXPI::Zero(nGhost);
-  ghost.segment(0, elmdist(myid)-ghostStart) =
-            ArrayXPI::LinSpaced(elmdist(myid)-ghostStart, ghostStart, elmdist(myid)-1);
-  ghost.segment(elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
-            ArrayXPI::LinSpaced(ghostEnd-elmdist(myid+1)+1, elmdist(myid+1), ghostEnd);
-
-  Vec Elimination;
-  PetscScalar *E_data;
-  ierr = VecCreateGhost(this->comm, this->nLocElem, this->nElem, nGhost, ghost.data(), &Elimination); CHKERRQ(ierr);
-  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
-  Eigen::Map< ArrayXPS > VecMap(E_data, nLocElem + nGhost);
-  VecMap.segment(0, nLocElem) = permute.cast<PetscScalar>();
-  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
-  ierr = VecGhostUpdateBegin(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  ierr = VecGhostUpdateEnd(Elimination, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-  ierr = VecGetArray(Elimination, &E_data); CHKERRQ(ierr);
-  new (&VecMap) Eigen::Map< ArrayXPS >(E_data, nLocElem + nGhost);
-  ArrayXPI allElemNumber = ArrayXPI::Zero(nGhost + nLocElem);
-  allElemNumber.segment(0, elmdist(myid)-ghostStart) = VecMap.segment(nLocElem, elmdist(myid)-ghostStart).cast<PetscInt>();
-  allElemNumber.segment(elmdist(myid)-ghostStart, nLocElem) = VecMap.segment(0, nLocElem).cast<PetscInt>();
-  allElemNumber.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1) =
-                VecMap.segment(nLocElem + elmdist(myid)-ghostStart, ghostEnd-elmdist(myid+1)+1).cast<PetscInt>();
-  ierr = VecRestoreArray(Elimination, &E_data); CHKERRQ(ierr);
+  ArrayXPI allElemNumber = ArrayXPI::Zero(ghostEnd - ghostStart + 1);
+  ierr = GetElemNumbers(ghostStart, ghostEnd, permute,
+                        allElemNumber); CHKERRQ(ierr);
 
   for (int i = 0; i < MinFI.size(); i++)
   {
@@ -1547,6 +1504,102 @@ PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
                 MPI_PETSCSCALAR, MaxFK.data(), recvcnt.data(),
                 recvdsp.data(), MPI_PETSCSCALAR, comm);
 
+  return ierr;
+}
+
+/*****************************************************************/
+/**       Get new element numbers for reordering filters        **/
+/*****************************************************************/
+PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
+                                      ArrayXPI &newElemNumber,
+                                      ArrayXPI &allElemNumber)
+{
+  PetscErrorCode ierr = 0;
+
+  /// This function works by passing the new element numbers to adjacent
+  /// processes in a continuous fashion until all processes have the
+  /// new element numbers for every element in the global range
+  /// ghost Start through ghostEnd (inclusive)
+  
+  // Set up necessary data structures for communication
+  allElemNumber.segment(this->elmdist(this->myid) - ghostStart,
+                        this->nLocElem) = newElemNumber;
+  ArrayXPI lo2hi = newElemNumber, hi2lo = newElemNumber;
+  ArrayXPI lo2hi_buf = ArrayXPI::Zero(0), hi2lo_buf = ArrayXPI::Zero(0);
+  int lo2hi_tag = 0, hi2lo_tag = 1;
+  MPI_Request lo2hi_req, hi2lo_req, final_req;
+  MPI_Status lo2hi_stat, hi2lo_stat;
+  int lo2hi_tgt = this->myid+1, hi2lo_tgt = this->myid-1;
+  int lo2hi_src = hi2lo_tgt, hi2lo_src = lo2hi_tgt;
+  int lo2hi_cnt, hi2lo_cnt;
+  PetscInt lo = this->myid;
+  PetscInt hi = this->myid+1;
+  int imdone = 0, alldone = 0;
+
+  for (int i = 0; i < this->nprocs; i++)
+  {
+    // Send up
+    if (this->myid < this->nprocs-1) {
+      ierr = MPI_Issend(lo2hi.data(), lo2hi.size(), MPI_PETSCINT, lo2hi_tgt,
+                        lo2hi_tag, this->comm, &lo2hi_req); CHKERRQ(ierr);
+    }
+    // Send down
+    if (this->myid > 0) {
+      ierr = MPI_Issend(hi2lo.data(), hi2lo.size(), MPI_PETSCINT, hi2lo_tgt,
+                        hi2lo_tag, this->comm, &hi2lo_req); CHKERRQ(ierr);
+    }
+
+    // Receive from above
+    if (this->myid < this->nprocs-1) {
+      ierr = MPI_Probe(hi2lo_src, hi2lo_tag, this->comm, &hi2lo_stat); CHKERRQ(ierr);
+      ierr = MPI_Get_count(&hi2lo_stat, MPI_PETSCINT, &hi2lo_cnt); CHKERRQ(ierr);
+      hi2lo_buf.resize(hi2lo_cnt);
+      ierr = MPI_Recv(hi2lo_buf.data(), hi2lo_cnt, MPI_PETSCINT, hi2lo_src,
+                      hi2lo_tag, this->comm, &hi2lo_stat); CHKERRQ(ierr);
+
+      if (hi2lo_buf.size() > 0)
+      {
+        // Fill in the element numbers
+        PetscInt size = std::max(0, std::min((PetscInt)hi2lo_buf.size(),
+                                ghostEnd-this->elmdist(hi)+1));
+        allElemNumber.segment(std::min(this->elmdist(hi),ghostEnd) - ghostStart, size) =
+              hi2lo_buf.segment(0, size);
+      }
+    }
+    // Receive from below
+    if (this->myid > 0) {
+      ierr = MPI_Probe(lo2hi_src, lo2hi_tag, this->comm, &lo2hi_stat); CHKERRQ(ierr);
+      ierr = MPI_Get_count(&lo2hi_stat, MPI_PETSCINT, &lo2hi_cnt); CHKERRQ(ierr);
+      lo2hi_buf.resize(lo2hi_cnt);
+      ierr = MPI_Recv(lo2hi_buf.data(), lo2hi_cnt, MPI_PETSCINT, lo2hi_src,
+                      lo2hi_tag, this->comm, &lo2hi_stat); CHKERRQ(ierr);
+
+      if (lo2hi_buf.size() > 0)
+      {
+        // Fill in the element numbers
+        PetscInt size = std::max(0, std::min((PetscInt)lo2hi_buf.size(),
+                                this->elmdist(lo)-ghostStart));
+        allElemNumber.segment(std::max(this->elmdist(lo-1)-ghostStart, 0), size) =
+              lo2hi_buf.segment(lo2hi_buf.size() - std::max(size, 1), size);
+      }
+    }
+
+
+    // Bookkeeping and checking for exit
+    lo = std::max(lo-1, 0);
+    hi = std::min(hi+1, this->nprocs);
+    if (imdone == 1){
+      MPI_Test(&final_req, &alldone, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+    }
+    else if (lo <= ghostStart && hi > ghostEnd) {
+      ierr = MPI_Ibarrier(this->comm, &final_req); CHKERRQ(ierr);
+      imdone = 1;
+    }
+
+    if (alldone != 0)
+      return ierr;
+    hi2lo = hi2lo_buf; lo2hi = lo2hi_buf;
+  }
   return ierr;
 }
 
