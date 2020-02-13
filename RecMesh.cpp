@@ -1562,7 +1562,7 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
         // Fill in the element numbers
         PetscInt size = std::max(0, std::min((PetscInt)hi2lo_buf.size(),
                                 ghostEnd-this->elmdist(hi)+1));
-        allElemNumber.segment(std::min(this->elmdist(hi),ghostEnd) - ghostStart, size) =
+        allElemNumber.segment(std::max(0, std::min(this->elmdist(hi),ghostEnd) - ghostStart), size) =
               hi2lo_buf.segment(0, size);
       }
     }
@@ -1588,12 +1588,13 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
     // Bookkeeping and checking for exit
     lo = std::max(lo-1, 0);
     hi = std::min(hi+1, this->nprocs);
-    if (imdone == 1){
-      MPI_Test(&final_req, &alldone, MPI_STATUS_IGNORE); CHKERRQ(ierr);
-    }
-    else if (lo <= ghostStart && hi > ghostEnd) {
+    if (!imdone && this->elmdist(lo) <= ghostStart && this->elmdist(hi) > ghostEnd) {
       ierr = MPI_Ibarrier(this->comm, &final_req); CHKERRQ(ierr);
       imdone = 1;
+    }
+    ierr = MPI_Barrier(this->comm); CHKERRQ(ierr); // Necessary to prevent gridlock
+    if (imdone == 1){
+      ierr = MPI_Test(&final_req, &alldone, MPI_STATUS_IGNORE); CHKERRQ(ierr);
     }
 
     if (alldone != 0)
