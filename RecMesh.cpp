@@ -1535,17 +1535,13 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
   PetscInt lo = this->myid;
   PetscInt hi = this->myid+1;
 
-  PetscInt down = 0, up = 0;
-  for (int i = 0; i < this->nprocs; i++)
-  {
-    if (this->elmdist(i) > ghostStart && i <= this->myid)
-      down++;
-    else if (this->elmdist(i) <= ghostEnd && i > this->myid)
-      up++;
-  }
-  down = std::max(down, up);
-  ierr = MPI_Allreduce(MPI_IN_PLACE, &down, 1, MPI_PETSCINT, MPI_MAX, this->comm); CHKERRQ(ierr);
-  for (int i = 0; i < down; i++)
+  int max_pass = 0;
+  while (ghostStart < this->elmdist(std::max(0, this->myid-max_pass)) ||
+         ghostEnd >= this->elmdist(std::min(this->nprocs, this->myid+max_pass+1)))
+    max_pass++;
+
+  ierr = MPI_Allreduce(MPI_IN_PLACE, &max_pass, 1, MPI_INT, MPI_MAX, this->comm); CHKERRQ(ierr);
+  for (int i = 0; i < max_pass; i++)
   {
     // Send up
     if (this->myid < this->nprocs-1) {
@@ -1597,8 +1593,15 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
     // Bookkeeping/preparing for the next iteration
     lo = std::max(lo-1, 0);
     hi = std::min(hi+1, this->nprocs);
+    if (this->myid < this->nprocs-1) {
+      ierr = MPI_Wait(&lo2hi_req, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+    }
+    if (this->myid > 0) {
+      ierr = MPI_Wait(&hi2lo_req, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+    }
     hi2lo = hi2lo_buf; lo2hi = lo2hi_buf;
   }
+
   return ierr;
 }
 

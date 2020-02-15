@@ -380,10 +380,6 @@ int TopOpt::FESolve( )
     }
   }
   ierr = KSPSolve( this->KUF, this->F, this->U ); CHKERRQ(ierr);
-  PetscViewer view;
-  ierr = PetscViewerBinaryOpen(this->comm, "K.bin", FILE_MODE_WRITE, &view); CHKERRQ(ierr);
-  ierr = MatView(this->K, view); CHKERRQ(ierr);
-  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
   KSPConvergedReason reason;
   ierr = KSPGetConvergedReason(this->KUF, &reason); CHKERRQ(ierr);
