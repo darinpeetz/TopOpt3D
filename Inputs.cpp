@@ -12,7 +12,7 @@ using namespace std;
 /****************************************************************/
 /**         Find next numerical value in string of text        **/
 /****************************************************************/
-void Find_Next_Digit(const char *line, unsigned short &offset, int length)
+void Find_Next_Digit(const char *line, unsigned short &offset, PetscInt length)
 {
   offset = max((unsigned short)0,offset);
   while (!isdigit(line[offset]) && line[offset] != '+' &&
@@ -44,15 +44,15 @@ vector<PetscScalar> Get_Values(string line)
 /****************************************************************/
 /**  Set the boundary conditions using definitions from below  **/
 /****************************************************************/
-PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
-          Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE)
+PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
+          ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE)
 {
   PetscErrorCode ierr = 0;
-  Eigen::ArrayXd distances = Eigen::ArrayXd::Zero(nLocNode);
+  ArrayXPS distances = ArrayXPS::Zero(nLocNode);
   Eigen::Array<bool, -1, 1> valid = Eigen::Array<bool, -1, 1>::Ones(nLocNode);
 
   // Get distances from center point and check limits in each direction
-  for (int i = 0; i < numDims; i++)
+  for (PetscInt i = 0; i < numDims; i++)
   {
     distances += ((node.block(0,i,nLocNode,1).array() - center(i))/radius(i)).square();
     valid = valid && (node.block(0,i,nLocNode,1).array() >= limits(i,0)) &&
@@ -63,38 +63,51 @@ PetscErrorCode TopOpt::Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
 
   switch (TYPE)
   {
-    case SUPPORT:
+    case SUPPORT: {
       supports.conservativeResize(suppNode.rows()+newNode.rows(), numDims);
-      for (int i = 0; i < numDims; i++)
+      for (PetscInt i = 0; i < numDims; i++)
         supports.block(suppNode.rows(), i, newNode.rows(), 1).setConstant(values(i));
       suppNode.conservativeResize(suppNode.rows()+newNode.rows());
       suppNode.segment(suppNode.rows()-newNode.rows(), newNode.rows()) = newNode;
       break;
-    case LOAD:
+    }
+    case LOAD: {
+      // Treat loads as distributed (reduce load magnitude on edge nodes)
+      ArrayXPS factors = ArrayXPS::Zero(nLocNode);
+      for (PetscInt el = 0; el < this->element.size(); el++){
+        PetscInt nd = *(element.data()+el);
+        if (nd < nLocNode)
+          factors[nd]++;
+      }
+      EigLab::IndRemove(factors, newNode, 1);
       loads.conservativeResize(loadNode.rows()+newNode.rows(), numDims);
-      for (int i = 0; i < numDims; i++)
-        loads.block(loadNode.rows(), i, newNode.rows(), 1).setConstant(values(i));
+      for (PetscInt i = 0; i < numDims; i++)
+        loads.block(loadNode.rows(), i, newNode.rows(), 1) = values(i)*factors;
       loadNode.conservativeResize(loadNode.rows()+newNode.rows());
       loadNode.segment(loadNode.rows()-newNode.rows(), newNode.rows()) = newNode;
       break;
-    case MASS:
+    }
+    case MASS: {
       masses.conservativeResize(massNode.rows()+newNode.rows(), numDims);
-      for (int i = 0; i < numDims; i++)
+      for (PetscInt i = 0; i < numDims; i++)
         masses.block(massNode.rows(), i, newNode.rows(), 1).setConstant(values(i));
       massNode.conservativeResize(massNode.rows()+newNode.rows());
       massNode.segment(massNode.rows()-newNode.rows(), newNode.rows()) = newNode;
       break;
-    case SPRING:
+    }
+    case SPRING: {
       springs.conservativeResize(springNode.rows()+newNode.rows(), numDims);
-      for (int i = 0; i < numDims; i++)
+      for (PetscInt i = 0; i < numDims; i++)
         springs.block(springNode.rows(), i, newNode.rows(), 1).setConstant(values(i));
       springNode.conservativeResize(springNode.rows()+newNode.rows());
       springNode.segment(springNode.rows()-newNode.rows(), newNode.rows()) = newNode;
       break;
-    default:
+    }
+    default: {
       PetscPrintf(comm, "Bad BC type given in input file, valid types are");
       PetscPrintf(comm, " Support, Load, Mass, and Spring\n");
       break;
+    }
   }
   return ierr;
 }
@@ -191,7 +204,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         PetscScalar pstep = strtod(line.c_str(), NULL);
         file >> line;
         PetscScalar pmax = strtod(line.c_str(), NULL);
-        this->penalties.reserve(int(std::max(pmax-pmin, 0.0)/pstep));
+        this->penalties.reserve(PetscInt(std::max(pmax-pmin, 0.0)/pstep));
         for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
           this->penalties.push_back(p);
       }
@@ -207,7 +220,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
           this->void_penalties.push_back(pmin);
         else
         {
-          this->void_penalties.reserve(int(std::max(pmax-pmin, 0.0)/pstep));
+          this->void_penalties.reserve(PetscInt(std::max(pmax-pmin, 0.0)/pstep));
           for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
             this->void_penalties.push_back(p);
         }
@@ -310,9 +323,9 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
       else if (!line.compare(0,14,"MG_COARSE_SIZE"))
       {
         file >> line;
-        int c_size = strtol(line.c_str(), NULL, 0);
+        PetscInt c_size = strtol(line.c_str(), NULL, 0);
         PetscScalar temp = log2(Nel.size());
-        for (int i = 0; i < Nel.size(); i++)
+        for (PetscInt i = 0; i < Nel.size(); i++)
           temp += log2(Nel(i)+1);
         temp -= log2(c_size);
         temp /= Nel.size();
@@ -727,8 +740,8 @@ PetscErrorCode TopOpt::Def_BC()
     }
     else
     {
-      Eigen::ArrayXd center, radius, values;
-      Eigen::ArrayXXd limits;
+      ArrayXPS center, radius, values;
+      ArrayXXPS limits;
       TYPE = OTHER;
       if (!line.compare("[/BC]"))
         return ierr;
@@ -757,7 +770,7 @@ PetscErrorCode TopOpt::Def_BC()
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Centers for BC " << TYPE << " are specified incorrectly\n";
-          center = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());
+          center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
           continue;
         }
         if (!line.compare(0,6,"Radius"))
@@ -766,7 +779,7 @@ PetscErrorCode TopOpt::Def_BC()
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Radii for BC " << TYPE << " are specified incorrectly\n";
-          radius = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());
+          radius = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
           continue;
         }
         if (!line.compare(0,6,"Limits"))
@@ -775,7 +788,7 @@ PetscErrorCode TopOpt::Def_BC()
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size()/2 != (unsigned short)numDims)
             cout << "Limits for BC " << TYPE << " are specified incorrectly\n";
-          limits = Eigen::Map<Eigen::ArrayXXd>(temp.data(), 2, temp.size()/2);
+          limits = Eigen::Map<ArrayXXPS>(temp.data(), 2, temp.size()/2);
           limits.transposeInPlace();
           continue;
         }
@@ -785,7 +798,7 @@ PetscErrorCode TopOpt::Def_BC()
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
             cout << "Values for BC " << TYPE << " are specified incorrectly\n";
-          values = Eigen::Map<Eigen::ArrayXd>(temp.data(), temp.size());
+          values = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
           continue;
         }
         break;

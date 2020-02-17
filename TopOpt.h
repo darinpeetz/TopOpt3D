@@ -209,8 +209,8 @@ public:
   PetscErrorCode Set_Funcs();
   PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity);
   PetscErrorCode Def_BC();
-  PetscErrorCode Set_BC(Eigen::ArrayXd center, Eigen::ArrayXd radius,
-              Eigen::ArrayXXd limits, Eigen::ArrayXd values, BCTYPE TYPE);
+  PetscErrorCode Set_BC(ArrayXPS center, ArrayXPS radius,
+                        ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE);
 
   // Basic methods
   void MPI_Set() {MPI_Comm_rank(comm, &myid); MPI_Comm_size(comm, &nprocs);}

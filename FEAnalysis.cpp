@@ -122,9 +122,7 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   ierr = MatSetSizes(this->K, numDims*nLocNode, numDims*nLocNode,
               numDims*nNode, numDims*nNode); CHKERRQ(ierr);
   ierr = MatSetOptionsPrefix(this->K, "K_"); CHKERRQ(ierr);
-  //ierr = MatSetType(this->K, MATMPIAIJ); CHKERRQ(ierr);
   ierr = MatSetFromOptions(this->K); CHKERRQ(ierr);
-  //ierr = MatSetBlockSize(this->K, this->numDims); CHKERRQ(ierr);
   ierr = MatXAIJSetPreallocation(this->K, this->numDims, onDiag, offDiag, 0, 0); CHKERRQ(ierr);
   delete[] onDiag; delete[] offDiag;
 
@@ -207,7 +205,7 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
     PetscInt nlevels = this->PR.size()+1;
     ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
     ierr = PCMGSetType(pc, PC_MG_MULTIPLICATIVE); CHKERRQ(ierr);
-    ierr = PCMGSetGalerkin(pc, PETSC_TRUE); CHKERRQ(ierr);
+    ierr = PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH); CHKERRQ(ierr);
     for (int i = 1; i < nlevels; i++) {
       ierr = PCMGSetInterpolation(pc, i, this->PR[nlevels-i-1]); CHKERRQ(ierr); }
   }
@@ -273,11 +271,78 @@ int TopOpt::FEAssemble( )
   ierr = MatGetDiagonal(this->K, Diagonal); CHKERRQ(ierr);
   ierr = VecGetArray(Diagonal, &p_Diag); CHKERRQ(ierr);
   ierr = VecGetLocalSize(Diagonal, &rows); CHKERRQ(ierr);
-  for (int i = 0; i < rows; i++)
-    p_Diag[i] = (PetscScalar)(p_Diag[i] == 0);
+  // Set the matrix nullspace (particularly important if no Dirichlet BC)
+  Vec *NullVecs; PetscInt nRBM = (this->numDims)*(this->numDims+1)/2;
+  ierr = VecDuplicateVecs(this->U, nRBM, &NullVecs); CHKERRQ(ierr);
+  Eigen::InnerStride<-1> skip(numDims);
+  Bmap RBMMap(NULL, 0, skip);
+  PetscScalar *p_Vec;
+  PetscInt mode = 0;
+  // Translation modes
+  for (PetscInt i = 0; i < this->numDims; i++)
+  {
+      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap.setOnes();
+      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+  }
+  // Rotation modes
+  for (PetscInt i = 0; i < this->numDims; i++)
+  {
+    for (PetscInt j = i+1; j < this->numDims; j++)
+    {
+      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap = this->node.col(j);
+      new (&RBMMap) Bmap(p_Vec + j, this->node.rows(), skip);
+      RBMMap = -this->node.col(i);
+      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+    }
+  }
+  // Adjust the diagonal and zero out detached parts of the rigid body modes
+  PetscScalar **p_Vecs;
+  ierr = VecGetArrays(NullVecs, nRBM, &p_Vecs);
+  for (PetscInt i = 0; i < rows; i++)
+  {
+    if (p_Diag[i] == 0) {
+      p_Diag[i] = 1;
+      for (mode = 0; mode < nRBM; mode++)
+        p_Vecs[mode][i] = 0;
+    }
+  }
+  ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
   ierr = VecRestoreArray(Diagonal, &p_Diag); CHKERRQ(ierr);
-  ierr = MatDiagonalSet(this->K, Diagonal, ADD_VALUES); CHKERRQ(ierr);
-  // Set operators
+  ierr = MatDiagonalSet(this->K, Diagonal, INSERT_VALUES); CHKERRQ(ierr);
+  
+  // Normalize the nullspace vectors
+  PetscScalar dots[nRBM-1];
+  for (mode = 0; mode < nRBM; mode++) {
+    ierr = VecMDot(NullVecs[mode], mode, NullVecs, dots); CHKERRQ(ierr);
+    for (PetscInt i = 0; i < mode; i++) {dots[i] *= -1;}
+    ierr = VecMAXPY(NullVecs[mode], mode, dots, NullVecs); CHKERRQ(ierr);
+    ierr = VecNormalize(NullVecs[mode], NULL); CHKERRQ(ierr);
+  }
+
+  PetscViewer view; char fname[20];
+  for (mode = 0; mode < nRBM; mode++) {
+    sprintf(fname, "RBM_%i", mode+1);
+    ierr = PetscViewerBinaryOpen(this->comm, fname, FILE_MODE_WRITE, &view); CHKERRQ(ierr);
+    ierr = VecView(NullVecs[mode], view); CHKERRQ(ierr);
+    ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
+  }
+
+  // Set the nullspace for the stiffness matrix
+  MatNullSpace Rigid;
+  ierr = MatNullSpaceCreate(this->comm, PETSC_FALSE, nRBM, NullVecs, &Rigid); CHKERRQ(ierr);
+  ierr = MatSetNullSpace(this->K, Rigid); CHKERRQ(ierr);
+  ierr = MatNullSpaceDestroy(&Rigid); CHKERRQ(ierr);
+  ierr = VecDestroyVecs(nRBM, &NullVecs); CHKERRQ(ierr);
+
+  // Set KSP operators
   ierr = KSPSetOperators(this->KUF, this->K, this->K); CHKERRQ(ierr);
 
   return ierr;
@@ -307,6 +372,8 @@ int TopOpt::FESolve( )
   if (!strcmp(pctype,PCGAMG))
   {
     ierr = PCSetCoordinates(pc, this->numDims, this->nLocNode, this->node.data()); CHKERRQ(ierr);
+    PetscReal threshold = 0.003;
+    ierr = PCGAMGSetThreshold(pc, &threshold, 1); CHKERRQ(ierr);
   }
   if (!strcmp(pctype,PCGAMG) || !strcmp(pctype,PCMG))
   {
