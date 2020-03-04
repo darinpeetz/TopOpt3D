@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "TopOpt.h"
 #include "EigLab.h"
+#include "EigenInverse.h"
 
 using namespace std;
 typedef Eigen::Map< Eigen::RowVectorXd, Eigen::Unaligned,
@@ -34,19 +35,34 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   }
 
   // Fixing dofs
-  fixedDof.resize( supports.cast<short>().sum() );
+  this->fixedDof.resize( this->supports.cast<short>().sum() );
   int ind = 0;
-  for (PetscInt i = 0; i < suppNode.rows(); i++)
+  for (PetscInt i = 0; i < this->suppNode.rows(); i++)
   {
-    for (short j = 0; j < numDims; j++)
+    for (short j = 0; j < this->numDims; j++)
     {
       if (supports(i,j))
-        fixedDof(ind++) = numDims*gNode(suppNode(i))+j;
+        this->fixedDof(ind++) = this->numDims*this->gNode(this->suppNode(i))+j;
     }
   }
-  fixedDof.conservativeResize(ind);
-  nFixDof = ind;
-  MPI_Allreduce(MPI_IN_PLACE, &nFixDof, 1, MPI_PETSCINT, MPI_SUM, comm);
+  this->fixedDof.conservativeResize(ind);
+  this->nFixDof = ind;
+  MPI_Allreduce(MPI_IN_PLACE, &this->nFixDof, 1, MPI_PETSCINT, MPI_SUM, comm);
+
+  // Fixing dofs for eigenvalue analysis
+  this->eigenFixedDof.resize( this->eigenSupports.cast<short>().sum() );
+  ind = 0;
+  for (PetscInt i = 0; i < this->eigenSuppNode.rows(); i++)
+  {
+    for (short j = 0; j < this->numDims; j++)
+    {
+      if (this->eigenSupports(i,j))
+        this->eigenFixedDof(ind++) = this->numDims*this->gNode(this->eigenSuppNode(i))+j;
+    }
+  }
+  this->eigenFixedDof.conservativeResize(ind);
+  this->nEigFixDof = ind;
+  MPI_Allreduce(MPI_IN_PLACE, &this->nEigFixDof, 1, MPI_PETSCINT, MPI_SUM, comm);
 
   // Get free dof
   ArrayXPI AllDof = ArrayXPI::LinSpaced(numDims*nLocNode, numDims*nddist(myid),
@@ -186,7 +202,7 @@ int TopOpt::FEInitialize ( ) // Set up the stiffness matrix and solver context
   // Create solver context
   ierr = KSPCreate(comm, &KUF); CHKERRQ(ierr);
   ierr = KSPSetType(KUF, KSPGMRES); CHKERRQ(ierr);
-  ierr = KSPSetInitialGuessNonzero(this->KUF, PETSC_FALSE); CHKERRQ(ierr);
+  ierr = KSPSetInitialGuessNonzero(this->KUF, PETSC_TRUE); CHKERRQ(ierr);
   ierr = KSPSetTolerances(KUF, 1e-8, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
   // Use unpreconditioned norm for convergence test
   ierr = KSPSetNormType(this->KUF, KSP_NORM_UNPRECONDITIONED); CHKERRQ(ierr);
@@ -242,6 +258,7 @@ int TopOpt::FEAssemble( )
       ke = p_E[el]*this->ke[el];
     else
       ke = p_E[el]*this->ke[0];
+    }
     for (short nd = 0; nd < element.cols(); nd++)
       cols[nd] = this->gNode(this->element(el, nd));
     for (short nd = 0; nd < element.cols(); nd++)
@@ -266,82 +283,16 @@ int TopOpt::FEAssemble( )
   // Apply Dirichlet B.C.'s
   ierr = MatZeroRowsColumns(this->K, fixedDof.size(), fixedDof.data(), 1.0, U, F); CHKERRQ(ierr);
   // Put a 1 on the diagonal wherever a node is fully detached from the structure
-  Vec Diagonal; PetscScalar *p_Diag; PetscInt rows;
+  Vec Diagonal; PetscScalar *p_Diag;
   ierr = MatCreateVecs(this->K, NULL, &Diagonal); CHKERRQ(ierr);
   ierr = MatGetDiagonal(this->K, Diagonal); CHKERRQ(ierr);
   ierr = VecGetArray(Diagonal, &p_Diag); CHKERRQ(ierr);
-  ierr = VecGetLocalSize(Diagonal, &rows); CHKERRQ(ierr);
-  // Set the matrix nullspace (particularly important if no Dirichlet BC)
-  Vec *NullVecs; PetscInt nRBM = (this->numDims)*(this->numDims+1)/2;
-  ierr = VecDuplicateVecs(this->U, nRBM, &NullVecs); CHKERRQ(ierr);
-  Eigen::InnerStride<-1> skip(numDims);
-  Bmap RBMMap(NULL, 0, skip);
-  PetscScalar *p_Vec;
-  PetscInt mode = 0;
-  // Translation modes
-  for (PetscInt i = 0; i < this->numDims; i++)
-  {
-      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
-      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
-      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
-      RBMMap.setOnes();
-      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
-      mode++;
+  for (PetscInt i = 0; i < this->numDims*this->nLocNode; i++) {
+    p_Diag[i] = (p_Diag[i] > 0) ? p_Diag[i] : 1;
   }
-  // Rotation modes
-  for (PetscInt i = 0; i < this->numDims; i++)
-  {
-    for (PetscInt j = i+1; j < this->numDims; j++)
-    {
-      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
-      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
-      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
-      RBMMap = this->node.col(j);
-      new (&RBMMap) Bmap(p_Vec + j, this->node.rows(), skip);
-      RBMMap = -this->node.col(i);
-      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
-      mode++;
-    }
-  }
-  // Adjust the diagonal and zero out detached parts of the rigid body modes
-  PetscScalar **p_Vecs;
-  ierr = VecGetArrays(NullVecs, nRBM, &p_Vecs);
-  for (PetscInt i = 0; i < rows; i++)
-  {
-    if (p_Diag[i] == 0) {
-      p_Diag[i] = 1;
-      for (mode = 0; mode < nRBM; mode++)
-        p_Vecs[mode][i] = 0;
-    }
-  }
-  ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
   ierr = VecRestoreArray(Diagonal, &p_Diag); CHKERRQ(ierr);
   ierr = MatDiagonalSet(this->K, Diagonal, INSERT_VALUES); CHKERRQ(ierr);
   
-  // Normalize the nullspace vectors
-  PetscScalar dots[nRBM-1];
-  for (mode = 0; mode < nRBM; mode++) {
-    ierr = VecMDot(NullVecs[mode], mode, NullVecs, dots); CHKERRQ(ierr);
-    for (PetscInt i = 0; i < mode; i++) {dots[i] *= -1;}
-    ierr = VecMAXPY(NullVecs[mode], mode, dots, NullVecs); CHKERRQ(ierr);
-    ierr = VecNormalize(NullVecs[mode], NULL); CHKERRQ(ierr);
-  }
-
-  PetscViewer view; char fname[20];
-  for (mode = 0; mode < nRBM; mode++) {
-    sprintf(fname, "RBM_%i", mode+1);
-    ierr = PetscViewerBinaryOpen(this->comm, fname, FILE_MODE_WRITE, &view); CHKERRQ(ierr);
-    ierr = VecView(NullVecs[mode], view); CHKERRQ(ierr);
-    ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
-  }
-
-  // Set the nullspace for the stiffness matrix
-  MatNullSpace Rigid;
-  ierr = MatNullSpaceCreate(this->comm, PETSC_FALSE, nRBM, NullVecs, &Rigid); CHKERRQ(ierr);
-  ierr = MatSetNullSpace(this->K, Rigid); CHKERRQ(ierr);
-  ierr = MatNullSpaceDestroy(&Rigid); CHKERRQ(ierr);
-  ierr = VecDestroyVecs(nRBM, &NullVecs); CHKERRQ(ierr);
-
   // Set KSP operators
   ierr = KSPSetOperators(this->KUF, this->K, this->K); CHKERRQ(ierr);
 
@@ -363,26 +314,27 @@ int TopOpt::FESolve( )
   ierr = KSPGetType(KUF, &ksptype); CHKERRQ(ierr);
   ierr = KSPGetPC(KUF, &pc); CHKERRQ(ierr);
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
-  if (this->verbose >= 2)
-  {
+  if (this->verbose >= 2) {
     ierr = PetscFPrintf(comm, output, "Solving governing PDE with %s solver "
                   "using %s preconditioning\n", ksptype, pctype); CHKERRQ(ierr);
   }
-  // Some extra work to do for multigrid preconditioners
-  if (!strcmp(pctype,PCGAMG))
-  {
+
+  // Set near nullspace and strength of connection metric for gamg
+  if (!strcmp(pctype,PCGAMG)) {
     ierr = PCSetCoordinates(pc, this->numDims, this->nLocNode, this->node.data()); CHKERRQ(ierr);
-    PetscReal threshold = 0.003;
+    PetscReal threshold = std::pow(0.05, this->numDims);
     ierr = PCGAMGSetThreshold(pc, &threshold, 1); CHKERRQ(ierr);
   }
-  if (!strcmp(pctype,PCGAMG) || !strcmp(pctype,PCMG))
-  {
+
+  // Select the smoothers we're using
+  if (!strcmp(pctype,PCGAMG) || !strcmp(pctype,PCMG)) {
     ierr = PCSetUp(pc); CHKERRQ(ierr);
     PetscInt levels;
     KSP smooth_ksp; PC smooth_pc; KSPType smooth_ksp_type; PCType smooth_pc_type;
     ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
-    if (!strcmp(pctype,PCMG))
-    {
+
+    // Perform a direct solve on the coarse level for GMG (should be on one process)
+    if (!strcmp(pctype,PCMG)) {
       KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
       ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
       ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
@@ -397,20 +349,29 @@ int TopOpt::FESolve( )
       ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
       ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
       ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
+      ierr = PCSetUp(sub_pc); CHKERRQ(ierr);
     }
-    ierr = PCSetUp(pc); CHKERRQ(ierr);
+    // else if (!strcmp(pctype,PCGAMG) && this->nFixDof == 0) {
+    //   ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+    //   ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
+    //   ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+    //   ierr = PCSetType(smooth_pc, PCSHELL); CHKERRQ(ierr);
+    //   ierr = CreateEigenShell(smooth_pc); CHKERRQ(ierr);
+    //   ierr = PCShellSetSetUp(smooth_pc, EigenShellSetUp); CHKERRQ(ierr);
+    //   ierr = PCShellSetApply(smooth_pc, EigenShellApply); CHKERRQ(ierr);
+    //   ierr = PCShellSetDestroy(smooth_pc, EigenShellDestroy); CHKERRQ(ierr);
+    //   ierr = PCShellSetName(smooth_pc, "Eigendecomposition Inverse"); CHKERRQ(ierr);
+    //   ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+    // }
 
     // Verify that the requested smoothers are being used
     ierr = PCMGGetSmoother(pc, levels-1, &smooth_ksp); CHKERRQ(ierr);
     ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
     ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
     ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
-    if (strcmp(this->smoother.c_str(), smooth_ksp_type))
-    {
-      if (!strcmp(this->smoother.c_str(), KSPRICHARDSON))
-      {
-        for (int i = 1; i < levels; i++)
-        {
+    if (strcmp(this->smoother.c_str(), smooth_ksp_type)) { // Specific smoother selected
+      if (!strcmp(this->smoother.c_str(), KSPRICHARDSON)) { // Weighted jacobi
+        for (int i = 1; i < levels; i++) {
           Mat mat;
           PetscInt size, blocksize;
           ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
@@ -420,14 +381,11 @@ int TopOpt::FESolve( )
           ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
           ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
           ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-          ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
-          ierr = PCBJacobiSetTotalBlocks(smooth_pc, size/blocksize, NULL);
+          ierr = PCSetType(smooth_pc, PCPBJACOBI); CHKERRQ(ierr);
         }
       }
-      else if (!strcmp(this->smoother.c_str(), KSPCHEBYSHEV))
-      {
-        for (int i = 1; i < levels; i++)
-        {
+      else if (!strcmp(this->smoother.c_str(), KSPCHEBYSHEV)) { // Chebyshev with SOR
+        for (int i = 1; i < levels; i++) {
           ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
           ierr = KSPSetType(smooth_ksp, KSPCHEBYSHEV); CHKERRQ(ierr);
           ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
@@ -439,37 +397,151 @@ int TopOpt::FESolve( )
       ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
       ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
     }
-    if (this->verbose >= 2)
-    {
+    if (this->verbose >= 2) {
       PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
                  "smoothing with %s preconditioning\n",
                   smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
     }
   }
-  ierr = KSPSolve( this->KUF, this->F, this->U ); CHKERRQ(ierr);
 
-  KSPConvergedReason reason;
-  ierr = KSPGetConvergedReason(this->KUF, &reason); CHKERRQ(ierr);
-  if (this->verbose >= 1)
-  {
+  // Isolate disconnected rigid bodies and set nullspace if necessary
+  ierr = IsolateRigid(); CHKERRQ(ierr);
+  ierr = SetMatNullSpace(); CHKERRQ(ierr);
+
+  // Solve for displacements
+  ierr = KSPSolve(this->KUF, this->F, this->U); CHKERRQ(ierr);
+
+  // Check if we converged properly
+  ierr = KSPGetConvergedReason(this->KUF, &KUF_reason); CHKERRQ(ierr);
+  if (this->verbose >= 1) {
     PetscInt its;
     ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
-    if (reason < 0)
-    {
-      ierr = PetscFPrintf(comm, output, "Solve for displacements failed after %i "
-                       "iterations with reason: %i\n", its, reason); CHKERRQ(ierr);
-    }
-    else
-    {
-      ierr = PetscFPrintf(comm, output, "Solve for displacements converged in %i "
-                       "iterations with reason: %i\n", its, reason); CHKERRQ(ierr);
-    }
+    ierr = PetscFPrintf(comm, output, "Solve for displacements %s after %i iterations"
+                        " with reason: %i\n", KUF_reason < 0 ? "failed" : "succeeded",
+                        its, KUF_reason); CHKERRQ(ierr);
   }
 
   ierr = VecGhostUpdateBegin(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
   ierr = VecGhostUpdateEnd(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
   
   return 0;
+}
+
+/*****************************************************/
+/**          Isolate disconnected features          **/
+/*****************************************************/
+PetscErrorCode TopOpt::IsolateRigid( )
+{
+  PetscErrorCode ierr = 0;
+
+  PC pc;
+  KSP smoother;
+  Mat A; Vec coarse, fine;
+  PetscInt levels;
+  PetscScalar *p_v, *p_U;
+  // Get the coarsest level and create a vector of ones
+  ierr = KSPGetPC(this->KUF, &pc); CHKERRQ(ierr);
+  ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
+  ierr = PCMGGetSmoother(pc, 0, &smoother); CHKERRQ(ierr);
+  ierr = KSPGetOperators(smoother, &A, NULL); CHKERRQ(ierr);
+  ierr = MatCreateVecs(A, &coarse, NULL); CHKERRQ(ierr);
+  ierr = VecSet(coarse, 1.0); CHKERRQ(ierr);
+  // Project that vector of ones to the finest level
+  for (PetscInt ii = 1; ii < levels; ii++) {
+    ierr = PCMGGetInterpolation(pc, ii, &A); CHKERRQ(ierr);
+    ierr = MatCreateVecs(A, NULL, &fine); CHKERRQ(ierr);
+    ierr = MatMult(A, coarse, fine); CHKERRQ(ierr);
+    ierr = VecDestroy(&coarse); CHKERRQ(ierr);
+    coarse = fine;
+  }
+  // Where the projected vector is zero, zero out the displacements
+  ierr = VecGetArray(coarse, &p_v); CHKERRQ(ierr);
+  ierr = VecGetArray(this->U, &p_U); CHKERRQ(ierr);
+  for (PetscInt i = 0; i < this->numDims*this->nLocNode; i++) {
+    if (p_v[i] == 0)
+      p_U[i] = 0;
+    else if (this->KUF_reason == KSP_CONVERGED_ITERATING)
+      p_U[i] = 1; // Haven't solved for u yet, set to 1 and unset in SetMatNullSpace
+    else if (p_U[i] == 0)
+      p_U[i] = 1e-12; // Previously detached, but not anymore
+  }
+  ierr = VecRestoreArray(coarse, &p_v); CHKERRQ(ierr);
+  ierr = VecRestoreArray(this->U, &p_U); CHKERRQ(ierr);
+
+  return ierr;
+}
+
+/*****************************************************/
+/**        Set nullspace when no Dirichlet BC       **/
+/*****************************************************/
+PetscErrorCode TopOpt::SetMatNullSpace( )
+{
+  PetscErrorCode ierr = 0;
+  if (this->nFixDof > 0) // Dirichlet BC are applied, shouldn't be a nullspace
+    return ierr;
+
+  // Set the matrix nullspace (particularly important if no Dirichlet BC)
+  Vec *NullVecs; PetscInt nRBM = (this->numDims)*(this->numDims+1)/2;
+  ierr = VecDuplicateVecs(this->U, nRBM, &NullVecs); CHKERRQ(ierr);
+  Eigen::InnerStride<-1> skip(numDims);
+  Bmap RBMMap(NULL, 0, skip);
+  PetscScalar *p_Vec;
+  PetscInt mode = 0;
+  // Translation modes
+  for (PetscInt i = 0; i < this->numDims; i++) {
+      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap.setOnes();
+      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+  }
+  // Rotation modes
+  for (PetscInt i = 0; i < this->numDims; i++) {
+    for (PetscInt j = i+1; j < this->numDims; j++) {
+      ierr = VecSet(NullVecs[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap = this->node.col(j);
+      new (&RBMMap) Bmap(p_Vec + j, this->node.rows(), skip);
+      RBMMap = -this->node.col(i);
+      ierr = VecRestoreArray(NullVecs[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+    }
+  }
+
+  // Adjust the diagonal and zero out detached parts of the rigid body modes
+  PetscScalar *p_U, **p_Vecs;
+  ierr = VecGetArray(this->U, &p_U); CHKERRQ(ierr);
+  ierr = VecGetArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
+  for (PetscInt i = 0; i < this->numDims*this->nLocNode; i++) {
+    if (p_U[i] == 0) {
+      for (mode = 0; mode < nRBM; mode++)
+        p_Vecs[mode][i] = 0;
+    }
+    else if (this->KUF_reason == KSP_CONVERGED_ITERATING)
+      p_U[i] = 0; // See note in IsolateRigid
+  }
+  ierr = VecRestoreArray(this->U, &p_U); CHKERRQ(ierr);
+  ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
+
+  // Normalize the nullspace vectors
+  PetscScalar dots[nRBM-1];
+  for (mode = 0; mode < nRBM; mode++) {
+    ierr = VecMDot(NullVecs[mode], mode, NullVecs, dots); CHKERRQ(ierr);
+    for (PetscInt i = 0; i < mode; i++) {dots[i] *= -1;}
+    ierr = VecMAXPY(NullVecs[mode], mode, dots, NullVecs); CHKERRQ(ierr);
+    ierr = VecNormalize(NullVecs[mode], NULL); CHKERRQ(ierr);
+  }
+
+  // Set the nullspace for the stiffness matrix
+  MatNullSpace Rigid;
+  ierr = MatNullSpaceCreate(this->comm, PETSC_FALSE, nRBM, NullVecs, &Rigid); CHKERRQ(ierr);
+  ierr = MatSetNullSpace(this->K, Rigid); CHKERRQ(ierr);
+  ierr = MatNullSpaceDestroy(&Rigid); CHKERRQ(ierr);
+  ierr = VecDestroyVecs(nRBM, &NullVecs); CHKERRQ(ierr);
+
+  return ierr;
 }
 
 /*****************************************************/

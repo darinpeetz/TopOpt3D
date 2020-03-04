@@ -18,6 +18,7 @@ PetscErrorCode TopOpt::Initialize()
   print_every = INT_MAX;
   last_print = 0;
   interpolation = SIMP;
+  KUF_reason = KSP_CONVERGED_ITERATING;
 
   ierr = PrepLog(); CHKERRQ(ierr);
   MPI_Set();
@@ -92,12 +93,15 @@ PetscErrorCode TopOpt::MeshOut()
 
   // Getting distribution of loads, supports, springs, and masses
   int loaddist = this->loadNode.rows(), suppdist = this->suppNode.rows();
+  int eigsuppdist = this->eigenSuppNode.rows();
   int springdist = this->springNode.rows(), massdist = this->massNode.rows();
-  MPI_Request loadreq, suppreq, springreq, massreq;
+  MPI_Request loadreq, suppreq, eigsuppreq, springreq, massreq;
   ierr = MPI_Iscan(MPI_IN_PLACE, &loaddist, 1, MPI_INT, MPI_SUM, this->comm,
             &loadreq); CHKERRQ(ierr);
   ierr = MPI_Iscan(MPI_IN_PLACE, &suppdist, 1, MPI_INT, MPI_SUM, this->comm,
             &suppreq); CHKERRQ(ierr);
+  ierr = MPI_Iscan(MPI_IN_PLACE, &eigsuppdist, 1, MPI_INT, MPI_SUM, this->comm,
+            &eigsuppreq); CHKERRQ(ierr);
   ierr = MPI_Iscan(MPI_IN_PLACE, &springdist, 1, MPI_INT, MPI_SUM, this->comm,
             &springreq); CHKERRQ(ierr);
   ierr = MPI_Iscan(MPI_IN_PLACE, &massdist, 1, MPI_INT, MPI_SUM, this->comm,
@@ -196,6 +200,36 @@ PetscErrorCode TopOpt::MeshOut()
   ierr = MPI_File_seek(fh, suppdist * this->supports.cols() * sizeof(bool),
                        MPI_SEEK_SET); CHKERRQ(ierr);
   ierr = MPI_File_write_all(fh, this->supports.data(), this->supports.size(),
+                            MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+
+  // Writing eigen analysis support node array
+  ierr = MPI_File_open(this->comm, "eigenSupportNodes.bin", MPI_MODE_CREATE |
+             MPI_MODE_WRONLY | MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+         CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+  ierr = MPI_File_open(this->comm, "eigenSupportNodes.bin", MPI_MODE_CREATE |
+                       MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
+  ierr = MPI_Wait(&eigsuppreq, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  eigsuppdist -= this->eigenSuppNode.rows();
+  ierr = MPI_File_seek(fh, eigsuppdist*sizeof(PetscInt), MPI_SEEK_SET); CHKERRQ(ierr);
+  global_int.resize(this->eigenSuppNode.rows(), 1);
+  for (int i = 0; i < this->eigenSuppNode.size(); i++)
+    global_int(i, 0) = this->gNode(this->eigenSuppNode(i)); CHKERRQ(ierr);
+  ierr = MPI_File_write_all(fh, global_int.data(), global_int.size(),
+                            MPI_PETSCINT, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+
+  // Writing eigen analysis supports array
+  ierr = MPI_File_open(this->comm, "eigenSupports.bin", MPI_MODE_CREATE |
+             MPI_MODE_WRONLY | MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+         CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+  ierr = MPI_File_open(this->comm, "eigenSupports.bin", MPI_MODE_CREATE |
+                       MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, eigsuppdist * this->eigenSupports.cols() * sizeof(bool),
+                       MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_write_all(fh, this->eigenSupports.data(), this->eigenSupports.size(),
                             MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
 

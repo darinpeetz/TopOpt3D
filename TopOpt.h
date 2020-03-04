@@ -23,7 +23,7 @@ typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
 #define MPI_PETSCSCALAR MPIU_SCALAR
 
-enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, OTHER };
+enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, EIGEN, OTHER };
 enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC };
 
 /// The master structure containing all information to be carried between iterations
@@ -80,6 +80,10 @@ public:
   ArrayXPI suppNode;
   //Boolean indicating if dof is fixed or not
   Eigen::Array<bool,-1, -1, Eigen::RowMajor> supports;
+  //Eigenvalue analysis support node numbers
+  ArrayXPI eigenSuppNode;
+  //Boolean indicating if dof is fixed for eigenvalue analysis or not
+  Eigen::Array<bool,-1, -1, Eigen::RowMajor> eigenSupports;
   //Spring Support node numbers
   ArrayXPI springNode;
   //Spring dof stiffnesses in Pa
@@ -118,6 +122,8 @@ public:
   ArrayXPI freeDof;
   //Global indices of fixed local dofs
   ArrayXPI fixedDof;
+  //Global indices of eigen analysis fixed local dofs
+  ArrayXPI eigenFixedDof;
   //Global indices of local dofs with springs
   ArrayXPI springDof;
   //Global indices of local dofs without springs
@@ -126,6 +132,8 @@ public:
   PetscInt nFreeDof;
   //Total number of fixed dofs
   PetscInt nFixDof;
+  //Total number of eigen analysis fixed dofs
+  PetscInt nEigFixDof;
   //Number of dofs with springs attached
   PetscInt nSpringDof;
   //Vector containing every dof number
@@ -146,12 +154,8 @@ public:
   Vec MLump;
   //The FEM solver context
   KSP KUF;
-  //Solver context for dynamic ST
-  KSP dynamicKSP;
-  //Solver context for buckling ST
-  KSP bucklingKSP;
-  //Flag to use direct instead of iterative solver
-  bool direct;
+  // Convergence flag for KSP;
+  KSPConvergedReason KUF_reason;
 
   /// Function information
   std::vector<Function_Base*> function_list;
@@ -275,10 +279,13 @@ public:
   // Finite Elements
   PetscErrorCode FEInitialize ( );
   PetscErrorCode FESolve ( );
-  PetscErrorCode FEAssemble( );
+  PetscErrorCode FEAssemble ( );
   PetscErrorCode MatIntFnc ( const VectorXPS &y );
+  PetscErrorCode IsolateRigid ( );
+  PetscErrorCode SetMatNullSpace ( );
+
   // Apply filter for chain rule
-  PetscErrorCode Chain_Filter(Vec dfdE, Vec dfdV);
+  PetscErrorCode Chain_Filter ( Vec dfdE, Vec dfdV );
 
 private:
   MatrixXPS LocalK ( PetscInt el );

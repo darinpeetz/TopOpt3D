@@ -55,7 +55,6 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
       printf("Objective gradient vector size (%li) does not match number of "
              "active design variables (%lu)\n", dfdx.size(), nactive);
     }
-    MPI_Barrier(Comm);
     return 60;
   }
   if (nactive != dgdx.rows())
@@ -65,7 +64,6 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
       printf("Constraint gradient vectors size (%li) does not match number of "
              "active design variables (%lu)\n", dgdx.rows(), nactive);
     }
-    MPI_Barrier(Comm);
     return 60;
   }
   /// At some point I plan to correctly implement OC-type update for simple problems

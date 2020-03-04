@@ -63,6 +63,7 @@ int main(int argc, char **args)
       ierr = topOpt->CreateMesh(Dimensions, Nel, Rmin, Rmax, Reorder_Mesh, 
                                 mg_levels, min_size); CHKERRQ(ierr);
       topOpt->Def_BC();
+
       xIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
     }
 
@@ -130,12 +131,6 @@ int main(int argc, char **args)
       ierr = PetscLogEventEnd(topOpt->funcEvent, 0, 0, 0, 0); CHKERRQ(ierr);
       ierr = topOpt->StepOut(f, g, optmma->Get_It(), optmma->Get_nactive());
                 CHKERRQ(ierr);
-
-  /*ierr = PetscFClose(topOpt->comm, topOpt->output); CHKERRQ(ierr);
-  delete topOpt;
-  delete optmma;
-  ierr = SlepcFinalize(); CHKERRQ(ierr);
-  return ierr;*/
 
       do
       {

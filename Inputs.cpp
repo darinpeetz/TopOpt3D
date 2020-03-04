@@ -71,6 +71,14 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
       suppNode.segment(suppNode.rows()-newNode.rows(), newNode.rows()) = newNode;
       break;
     }
+    case EIGEN: {
+      eigenSupports.conservativeResize(eigenSuppNode.rows()+newNode.rows(), numDims);
+      for (PetscInt i = 0; i < numDims; i++)
+        eigenSupports.block(eigenSuppNode.rows(), i, newNode.rows(), 1).setConstant(values(i));
+      eigenSuppNode.conservativeResize(eigenSuppNode.rows()+newNode.rows());
+      eigenSuppNode.segment(eigenSuppNode.rows()-newNode.rows(), newNode.rows()) = newNode;
+      break;
+    }
     case LOAD: {
       // Treat loads as distributed (reduce load magnitude on edge nodes)
       ArrayXPS factors = ArrayXPS::Zero(nLocNode);
@@ -759,6 +767,8 @@ PetscErrorCode TopOpt::Def_BC()
         TYPE = MASS;
       else if (!line.compare(0,6,"Spring"))
         TYPE = SPRING;
+      else if (!line.compare(0,3,"Eig"))
+        TYPE = EIGEN;
       getline(file, line);
 
       while (true)

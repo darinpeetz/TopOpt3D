@@ -242,6 +242,44 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   input.read((char*)supports.data(), supports.size()*sizeof(bool));
   input.close();
 
+  // Eigen Analysis Fixed Supports
+  filename = folder + "/eigenSupportNodes.bin";
+  input.open(filename.c_str(), ios::ate | ios::binary);
+  if (input.is_open()) {
+    filesize = input.tellg();
+    input.seekg(0);
+    temp_node.resize(filesize/sizeof(PetscInt));
+    input.read((char*)temp_node.data(), filesize);
+    input.close();
+    // Now find the local part
+    begin = 0; finish = temp_node.rows();
+    for (int i = 0; i < temp_node.rows(); i++)
+    {
+      if (temp_node(i) < nddist(myid))
+        begin++;
+      if (temp_node(i) >= nddist(myid+1))
+      {
+        finish = i;
+        break;
+      }
+    }
+    eigenSuppNode = temp_node.segment(begin, finish-begin) -= nddist(myid);
+    // Load the eigen analysis supports
+    filename = folder + "/eigenSupports.bin";
+    input.open(filename.c_str(), ios::ate | ios::binary);
+    if (!input.is_open())
+      SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open eigen supports file");
+    filesize = input.tellg();
+    input.seekg(begin*sizeof(bool)*numDims);
+    eigenSupports.resize(eigenSuppNode.size(), numDims);
+    input.read((char*)eigenSupports.data(), eigenSupports.size()*sizeof(bool));
+    input.close();
+  }
+  else { // assume there are no eigen fixed dofs
+    eigenSuppNode.resize(0);
+    eigenSupports.resize(0, numDims);
+  }
+
   /// Establish Global Numbering
   nLocElem = elmdist(myid+1)-elmdist(myid);
   nElem = elmdist(nprocs);

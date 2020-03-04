@@ -20,22 +20,25 @@ public:
   ~LOPGMRES();
   // How much information to print
   PetscErrorCode Set_Verbose(PetscInt verbose);
+  // Set the preconditioner instance
+  PetscErrorCode Set_PC(PC pc) {this->pc = pc; 
+        PetscErrorCode ierr = PetscObjectReference((PetscObject)pc);
+        CHKERRQ(ierr); return ierr;}
 
 private:
+  /// Class variables
+  // Preconditioner instance
+  PC pc;
   /// Private methods
   // Prepare solver for compute step
   PetscErrorCode Compute_Init();
-  PetscErrorCode Create_Hierarchy();
   PetscErrorCode Initialize_V(PetscInt &j);
   // Cleanup after compute step
   PetscErrorCode Compute_Clean();
   // Multigrid solver
   PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm, PetscScalar &Au_norm);
-  PetscErrorCode MGSetup(Vec f, PetscReal fnorm);
-  // Apply Operator at a given level
-  PetscErrorCode ApplyOP(Vec x, Vec y, PetscInt level);
-  // Coarse solver in multigrid
-  PetscErrorCode Coarse_Solve();
+  // Update the search space with the correction equation
+  PetscErrorCode Update_Search(Vec x, Vec residual, PetscReal rnorm);
   // Output information
   PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "LOPGMRES found %i of a requested %i eigenvalues after %i iterations \n\n", nev_conv, nev_req, it);}
 

@@ -23,7 +23,6 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 LOPGMRES::LOPGMRES(MPI_Comm comm)
 {
   this->comm = comm; Set_ID();
-  nsweep = 2;
   PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose", &verbose, NULL);
   PetscFOpen(this->comm, "stdout", "w", &output);
   file_opened = 1;
@@ -34,6 +33,7 @@ LOPGMRES::LOPGMRES(MPI_Comm comm)
 /******************************************************************************/
 LOPGMRES::~LOPGMRES()
 {
+  PetscErrorCode ierr = PCDestroy(&this->pc); CHKERRV(ierr);
 }
 
 /******************************************************************************/
@@ -44,44 +44,6 @@ PetscErrorCode LOPGMRES::Set_Verbose(PetscInt verbose)
   this->verbose = verbose;
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
-  return 0;
-}
-
-/******************************************************************************/
-/**                      Creates multilevel hierarchy                        **/
-/******************************************************************************/
-PetscErrorCode LOPGMRES::Create_Hierarchy()
-{
-  PetscErrorCode ierr = 0;
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(comm, output, "Creating operators at each level\n"); CHKERRQ(ierr);
-  }
-
-  ierr = PetscLogEventBegin(EIG_Hierarchy, 0, 0, 0, 0); CHKERRQ(ierr);
-  for (unsigned int i = 0; i < P.size(); i++)
-  {
-    if (this->tau == SR || this->tau == SM || this->tau == SA)
-    {
-      if (this->A[i+1] == NULL)
-      {
-        ierr = MatPtAP(A[i], P[i], MAT_INITIAL_MATRIX, 1.0, A.data()+i+1); CHKERRQ(ierr);
-      }
-      K = A;
-      B.resize(1);
-    }
-    if (this->tau == LR || this->tau == LM || this->tau == LA)
-    {
-      if (this->B[i+1] == NULL)
-      {
-        ierr = MatPtAP(B[i], P[i], MAT_INITIAL_MATRIX, 1.0, B.data()+i+1); CHKERRQ(ierr);
-      }
-      K = B;
-      A.resize(1);
-    }
-  }
-  ierr = PetscLogEventEnd(EIG_Hierarchy, 0, 0, 0, 0); CHKERRQ(ierr);
-
   return 0;
 }
 
@@ -98,28 +60,6 @@ PetscErrorCode LOPGMRES::Compute_Init()
   // Clear any old eigenvectors
   if (nev_conv > 0)
     ierr = VecDestroyVecs(nev_conv, &phi); CHKERRQ(ierr);
-
-  // Check if MG cycle type was set at command line
-  const PetscInt ct_length = 5;
-  char cycle_type[ct_length];
-  PetscBool cycle_type_set = PETSC_FALSE;
-  ierr = PetscOptionsGetString(NULL, NULL, "-LOPGMRES_Cycle_Type", cycle_type,
-                               ct_length, &cycle_type_set); CHKERRQ(ierr);
-  if (cycle_type_set)
-  {
-    for (int i = 0; i < ct_length; i++)
-    {
-      if (cycle_type[i] == '\0')
-        break;
-      cycle_type[i] = toupper(cycle_type[i]);
-    }
-    if (!strcmp(cycle_type, "FULL"))
-      cycle = FMGCycle;
-    else if (!strcmp(cycle_type, "V"))
-      cycle = VCycle;
-    else
-      PetscPrintf(comm, "Bad LOPGMRES_Cycle_Type given %s, should be \"FULL\" or \"V\"", cycle_type);
-  }
 
   // Preallocate eigenvalues and eigenvectors at each level and get problem size
   Vec temp;
@@ -146,46 +86,6 @@ PetscErrorCode LOPGMRES::Compute_Init()
   ierr = VecDuplicateVecs(Q[0][0], jmax, &TempVecs); CHKERRQ(ierr);
   TempScal.setZero(std::max(jmax,Qsize));
 
-  // Check for options in MG preconditioner
-  ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Jacobi_nSweep", &nsweep, NULL); CHKERRQ(ierr);
-  ierr = PetscOptionsGetReal(NULL, NULL, "-LOPGMRES_Jacobi_Weight", &w, NULL); CHKERRQ(ierr);
-  // Preallocate for operators
-  Dlist.resize(levels-1);
-  xlist.resize(levels);
-  flist.resize(levels);
-  OPx.resize(levels-1);
-  for (int ii = 0; ii < levels-1; ii++)
-  {
-    ierr = MatCreateVecs(K[ii+1], xlist.data()+ii+1, flist.data()+ii+1); CHKERRQ(ierr);
-    ierr = MatCreateVecs(K[ii], Dlist.data()+ii, OPx.data()+ii); CHKERRQ(ierr);
-    ierr = MatGetDiagonal(K[ii], Dlist[ii]); CHKERRQ(ierr);
-  }
-
-  // Prep coarse problem
-  ierr = KSPCreate(comm, &ksp_coarse); CHKERRQ(ierr);
-  ierr = KSPSetType(ksp_coarse, KSPPREONLY); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(ksp_coarse, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
-  ierr = KSPSetOptionsPrefix(ksp_coarse, "LOPGMRES_coarse_"); CHKERRQ(ierr);
-  ierr = KSPSetFromOptions(ksp_coarse); CHKERRQ(ierr);
-  PC pc;
-  ierr = KSPGetPC(ksp_coarse, &pc); CHKERRQ(ierr);
-  ierr = PCSetType(pc, PCBJACOBI); CHKERRQ(ierr);
-  ierr = PCSetOptionsPrefix(pc, "LOPGMRES_coarse_"); CHKERRQ(ierr);
-  ierr = PCSetFromOptions(pc); CHKERRQ(ierr);
-
-  ierr = KSPSetOperators(ksp_coarse, K.back(), K.back()); CHKERRQ(ierr);
-  ierr = KSPSetUp(ksp_coarse); CHKERRQ(ierr);
-  PC sub_pc; KSP *sub_ksp;
-  PetscInt blocks, first;
-  ierr = PCBJacobiGetSubKSP(pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
-  if (blocks != 1) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_PLIB,"blocks on this process, %D, is not one",blocks);
-  ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
-  ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
-  ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
-  ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1); CHKERRQ(ierr);
-  ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
-  ierr = PetscLogEventEnd(EIG_Comp_Init, 0, 0, 0, 0); CHKERRQ(ierr);
-
   return 0;
 }
 
@@ -196,31 +96,37 @@ PetscErrorCode LOPGMRES::Initialize_V(PetscInt &j)
 {
   PetscErrorCode ierr = 0;
 
+  Vec Temp;
+  ierr = VecDuplicate(V[0], &Temp); CHKERRQ(ierr);
+
   PetscBool start;
   ierr = PetscOptionsHasName(NULL, NULL, "-LOPGMRES_Static_Start", &start); CHKERRQ(ierr);
   if (start){
     PetscInt first;
     PetscScalar *p_vec;
     ierr = MatGetOwnershipRange(A[0], &first, NULL); CHKERRQ(ierr);
-    for (int ii = 0; ii < jmin; ii++)
-    {
-      ierr = VecGetArray(V[ii], &p_vec); CHKERRQ(ierr);
+    for (int ii = 0; ii < jmin; ii++) {
+      ierr = VecGetArray(Temp, &p_vec); CHKERRQ(ierr);
       for (int jj = 0; jj < nlocal; jj++)
         p_vec[jj] = pow(jj+first+1,ii);
-      ierr = VecRestoreArray(V[ii], &p_vec); CHKERRQ(ierr);
+      ierr = VecRestoreArray(Temp, &p_vec); CHKERRQ(ierr);
+      ierr = MatMult(this->A[0], Temp, V[ii]); CHKERRQ(ierr);
+      ierr = Remove_NullSpace(this->A[0], V[ii]); CHKERRQ(ierr);
     }
     j = jmin;
   }
   else{  
     PetscRandom random;
     ierr = PetscRandomCreate(comm, &random); CHKERRQ(ierr);
-    for (int ii = 0; ii < jmin; ii++)
-    {
-      ierr = VecSetRandom(V[ii], random); CHKERRQ(ierr);
+    for (int ii = 0; ii < jmin; ii++) {
+      ierr = VecSetRandom(Temp, random); CHKERRQ(ierr);
+      ierr = MatMult(this->A[0], Temp, V[ii]); CHKERRQ(ierr);
+      ierr = Remove_NullSpace(this->A[0], V[ii]); CHKERRQ(ierr);
     }
     ierr = PetscRandomDestroy(&random);
     j = jmin;
   }
+  ierr = VecDestroy(&Temp); CHKERRQ(ierr);
 
   return 0;
 }
@@ -237,6 +143,21 @@ PetscErrorCode LOPGMRES::Update_Preconditioner(Vec residual,
   ierr = VecNorm(AQ[0][nev_conv], NORM_2, &Au_norm); CHKERRQ(ierr);
 
   return 0;
+}
+
+/******************************************************************************/
+/**                          Update search space                             **/
+/******************************************************************************/
+PetscErrorCode LOPGMRES::Update_Search(Vec x, Vec residual, PetscReal rnorm)
+{
+  PetscErrorCode ierr = 0;
+  
+  Mat A;
+  ierr = PCGetOperators(this->pc, &A, NULL); CHKERRQ(ierr);
+  ierr = PCApply(this->pc, residual, x); CHKERRQ(ierr);
+  ierr = Remove_NullSpace(A, x); CHKERRQ(ierr);
+
+  return ierr;
 }
 
 /******************************************************************************/
@@ -269,48 +190,7 @@ PetscErrorCode LOPGMRES::Compute_Clean()
   ierr = VecDestroyVecs(jmax, &V); CHKERRQ(ierr);
   ierr = VecDestroyVecs(jmax, &TempVecs); CHKERRQ(ierr);
 
-  // Destroy coarse problem
-  ierr = KSPDestroy(&ksp_coarse); CHKERRQ(ierr);
-
-  // Destroy Operators
-  for (int ii = 0; ii < levels-1; ii++)
-  {
-    ierr = VecDestroy(xlist.data()+ii+1); CHKERRQ(ierr);
-    ierr = VecDestroy(flist.data()+ii+1); CHKERRQ(ierr);
-    ierr = VecDestroy(Dlist.data()+ii); CHKERRQ(ierr);
-    ierr = VecDestroy(OPx.data()+ii); CHKERRQ(ierr);
-  }
   Q.resize(0);
-
-  return 0;
-}
-
-/******************************************************************************/
-/**                  Set up multigrid for correction equation                **/
-/******************************************************************************/
-PetscErrorCode LOPGMRES::MGSetup(Vec f, PetscReal fnorm)
-{
-  return 0; // No action needed for LOPGMRES
-}
-
-/******************************************************************************/
-/**                        Coarse solve for multigrid                        **/
-/******************************************************************************/
-PetscErrorCode LOPGMRES::Coarse_Solve()
-{
-  PetscErrorCode ierr = KSPSolve(ksp_coarse, flist.back(), xlist.back()); CHKERRQ(ierr);
-  return 0;
-}
-
-/******************************************************************************/
-/**                         Apply combined operator                          **/
-/******************************************************************************/
-PetscErrorCode LOPGMRES::ApplyOP(Vec x, Vec y, PetscInt level)
-{
-  PetscErrorCode ierr = 0;
-  ierr = PetscLogEventBegin(EIG_ApplyOP[level], 0, 0, 0, 0); CHKERRQ(ierr);
-  ierr = MatMult(K[level],x,y); CHKERRQ(ierr);
-  ierr = PetscLogEventEnd(EIG_ApplyOP[level], 0, 0, 0, 0); CHKERRQ(ierr);
 
   return 0;
 }

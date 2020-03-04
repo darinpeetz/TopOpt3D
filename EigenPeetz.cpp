@@ -292,8 +292,9 @@ PetscErrorCode EigenPeetz::Icgsm(Vec *Q, Mat M, Vec u, PetscScalar &r, PetscInt 
       break;
     it++; r0 = r;
   }
-  if ( (r <= alpha*r0) && (myid == 0) )
-    cout << "Warning, loss of orthogonality experienced in ICGSM.\n";
+  if (r <= alpha*r0) {
+    SETERRQ(comm, PETSC_ERR_FP, "Breakdown in ICGSM routine");
+  }
 
   ierr = VecDestroy(&um); CHKERRQ(ierr);
 

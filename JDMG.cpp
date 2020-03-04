@@ -30,6 +30,10 @@ JDMG::JDMG(MPI_Comm comm)
   PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &verbose, NULL);
   PetscFOpen(this->comm, "stdout", "w", &output);
   file_opened = 1;
+  cycle = FMGCycle;
+  levels = 0;
+  nsweep = 5;
+  w = 4.0/7;
 }
 
 /******************************************************************************/
@@ -37,6 +41,8 @@ JDMG::JDMG(MPI_Comm comm)
 /******************************************************************************/
 JDMG::~JDMG()
 {
+  for (unsigned int ii = 0; ii < P.size(); ii++)
+    MatDestroy(P.data()+ii);
 }
 
 /******************************************************************************/
@@ -48,6 +54,86 @@ PetscErrorCode JDMG::Set_Verbose(PetscInt verbose)
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;
+}
+
+/******************************************************************************/
+/**                     Extract hierarchy from PCMG object                   **/
+/******************************************************************************/
+PetscErrorCode JDMG::PCMG_Extract(PC pcmg, bool isB, bool isA)
+{
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+    ierr = PetscFPrintf(comm, output, "Extracting hierarchy from PC object\n"); CHKERRQ(ierr);
+
+  KSP smoother;
+  ierr = PCMGGetLevels(pcmg, &levels); CHKERRQ(ierr);
+  P.resize(levels-1, NULL);
+  for (unsigned int ii = 1; ii < A.size(); ii++) {
+    ierr = MatDestroy(A.data()+ii); CHKERRQ(ierr);
+    A[ii] = NULL;
+  }
+  for (unsigned int ii = 1; ii < B.size(); ii++) {
+    ierr = MatDestroy(B.data()+ii); CHKERRQ(ierr);
+    B[ii] = NULL;
+  }
+  A.resize(levels, NULL); B.resize(levels, NULL);
+  for (PetscInt ii = levels-1, jj = 0; ii > 0; ii--, jj++)
+  {
+    ierr = PCMGGetInterpolation(pcmg, ii, P.data()+jj); CHKERRQ(ierr);
+    ierr = PetscObjectReference((PetscObject)P[jj]); CHKERRQ(ierr);
+    if (isA)
+    {
+      ierr = PCMGGetSmoother(pcmg, ii, &smoother); CHKERRQ(ierr);
+      ierr = KSPGetOperators(smoother, A.data()+jj+1, NULL); CHKERRQ(ierr);
+      ierr = PetscObjectReference((PetscObject)A[jj+1]); CHKERRQ(ierr);
+    }
+    if (isB)
+    {
+      ierr = PCMGGetSmoother(pcmg, ii-1, &smoother); CHKERRQ(ierr);
+      ierr = KSPGetOperators(smoother, B.data()+jj+1, NULL); CHKERRQ(ierr);
+      ierr = PetscObjectReference((PetscObject)B[jj+1]); CHKERRQ(ierr);
+    }
+  }
+
+  return 0;
+}
+
+/******************************************************************************/
+/**                            Use given hierarchy                           **/
+/******************************************************************************/
+PetscErrorCode JDMG::Set_Hierarchy(const std::vector<Mat> P, const std::vector<MPI_Comm> MG_comms)
+{
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+    ierr = PetscFPrintf(comm, output, "Setting hierarchy from list of interpolators\n"); CHKERRQ(ierr);
+
+  this->P = P;
+  for (unsigned int ii = 0; ii < this->P.size(); ii++)
+  {
+    ierr = PetscObjectReference((PetscObject)this->P[ii]); CHKERRQ(ierr);
+  }
+
+  for (unsigned int ii = 1; ii < A.size(); ii++) {
+    ierr = MatDestroy(A.data()+ii); CHKERRQ(ierr);
+    A[ii] = NULL;
+  }
+  for (unsigned int ii = 1; ii < B.size(); ii++) {
+    ierr = MatDestroy(B.data()+ii); CHKERRQ(ierr);
+    B[ii] = NULL;
+  }
+
+  levels = P.size()+1; A.resize(levels, NULL); B.resize(levels, NULL);
+  this->MG_comms.resize(levels);
+  if (MG_comms.size() == 0)
+    std::fill(this->MG_comms.begin(), this->MG_comms.end(), comm);
+  else if (MG_comms.size() == 1)
+    std::fill(this->MG_comms.begin(), this->MG_comms.end(), MG_comms[0]);
+  else if ((PetscInt)MG_comms.size() == levels)
+    this->MG_comms = MG_comms;
+  else
+    SETERRQ(comm, PETSC_ERR_ARG_SIZ, "List of communicators does not match size of hierarchy");
+
+  return ierr;
 }
 
 /******************************************************************************/
@@ -84,6 +170,10 @@ PetscErrorCode JDMG::Create_Hierarchy()
 PetscErrorCode JDMG::Compute_Init()
 {
   PetscErrorCode ierr = 0;
+
+  // Set up multigrid hierachy for both operators
+  ierr = Create_Hierarchy(); CHKERRQ(ierr);
+
   if (this->verbose >= 3)
     ierr = PetscFPrintf(comm, output, "Initializing compute structures\n"); CHKERRQ(ierr);
 
@@ -441,6 +531,26 @@ PetscErrorCode JDMG::Update_Preconditioner(Vec residual,
 }
 
 /******************************************************************************/
+/**                          Update search space                             **/
+/******************************************************************************/
+PetscErrorCode JDMG::Update_Search(Vec x, Vec residual, PetscReal rnorm)
+{
+  PetscErrorCode ierr = 0;
+
+  // Call the multigrid solver to solve correction equation
+  ierr = MGSetup(residual, rnorm); CHKERRQ(ierr);
+  if (cycle == VCycle) {
+    ierr = MGSolve(x, residual); CHKERRQ(ierr);
+  }
+  else if (cycle == FMGCycle) {
+    ierr = FullMGSolve(x, residual); CHKERRQ(ierr);
+  }
+  else
+    SETERRQ(comm, PETSC_ERR_SUP, "Invalid Multigrid cycle chosen");
+  return ierr;
+}
+
+/******************************************************************************/
 /**                      Clean up after compute phase                        **/
 /******************************************************************************/
 PetscErrorCode JDMG::Compute_Clean()
@@ -763,6 +873,132 @@ PetscErrorCode JDMG::ApplyOP(Vec x, Vec y, PetscInt level)
   ierr = VecMAXPY(y, nev_conv+1, PQBx.data(), BQ[level]); CHKERRQ(ierr);
   ierr = PetscLogEventEnd(EIG_ApplyOP4[level], 0, 0, 0, 0); CHKERRQ(ierr);
   ierr = PetscLogEventEnd(EIG_ApplyOP[level], 0, 0, 0, 0); CHKERRQ(ierr);
+
+  return 0;
+}
+
+/******************************************************************************/
+/**               Apply full multigrid for correction equation               **/
+/******************************************************************************/
+PetscErrorCode JDMG::FullMGSolve(Vec x, Vec f)
+{
+  PetscErrorCode ierr = 0;
+  ierr = PetscLogEventBegin(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
+  if (this->verbose >= 3)
+    ierr = PetscFPrintf(comm, output, "Applying multigrid\n"); CHKERRQ(ierr);
+
+  // Set x and f at the top of the hierarchy
+  xlist[0] = x;
+  flist[0] = f;
+
+  // Project f onto lowest level
+  for (int ii = 0; ii < levels-1; ii++)
+  {
+    ierr = MatMultTranspose(P[ii], flist[ii], flist[ii+1]); CHKERRQ(ierr);
+  }
+
+  // FMG cycle
+  for (int ii = levels-1; ii >= 0; ii--)
+  {
+    // Downcycling
+    for (int jj = ii; jj < levels; jj++)
+    {
+      if (jj == levels-1)
+      {
+        // Coarse solve
+        ierr = Coarse_Solve(); CHKERRQ(ierr);
+      }
+      else
+      {
+        ierr = WJac(flist[jj], xlist[jj], jj); CHKERRQ(ierr);
+        ierr = ApplyOP(xlist[jj], OPx[jj], jj); CHKERRQ(ierr);
+        ierr = VecAYPX(OPx[jj], -1.0, flist[jj]); CHKERRQ(ierr);
+        ierr = MatMultTranspose(P[jj], OPx[jj], flist[jj+1]); CHKERRQ(ierr);
+        ierr = VecSet(xlist[jj+1], 0.0); CHKERRQ(ierr);
+      }
+    }
+    //Upcycling
+    for (int jj = levels-2; jj >= ii; jj--)
+    {
+      ierr = MatMultAdd(P[jj], xlist[jj+1], xlist[jj], xlist[jj]); CHKERRQ(ierr);
+      ierr = WJac(flist[jj], xlist[jj], jj); CHKERRQ(ierr);
+    }
+    if (ii > 0)
+    {
+      ierr = MatMult(P[ii-1], xlist[ii], xlist[ii-1]); CHKERRQ(ierr);
+    }
+  }
+
+  ierr = PetscLogEventEnd(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
+  return 0;
+}     
+
+/******************************************************************************/
+/**                 Apply multigrid for correction equation                  **/
+/******************************************************************************/
+PetscErrorCode JDMG::MGSolve(Vec x, Vec f)
+{
+  PetscErrorCode ierr = 0;
+  ierr = PetscLogEventBegin(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
+  if (this->verbose >= 3)
+    ierr = PetscFPrintf(comm, output, "Applying multigrid\n"); CHKERRQ(ierr);
+
+  // Set x and f at the top of the hierarchy
+  xlist[0] = x;
+  flist[0] = f;
+
+  // Downcycle
+  for (int ii = 0; ii < levels-1; ii++)
+  {
+    ierr = VecSet(xlist[ii], 0.0); CHKERRQ(ierr);
+    ierr = WJac(flist[ii], xlist[ii], ii); CHKERRQ(ierr);
+    ierr = ApplyOP(xlist[ii], OPx[ii], ii); CHKERRQ(ierr);
+    ierr = VecAYPX(OPx[ii], -1.0, flist[ii]); CHKERRQ(ierr);
+    ierr = MatMultTranspose(P[ii], OPx[ii], flist[ii+1]); CHKERRQ(ierr);
+  }
+
+  // Coarse solve
+  ierr = Coarse_Solve(); CHKERRQ(ierr);
+
+  // Upcycle
+  for (int ii = levels-2; ii >= 0; ii--)
+  {
+    ierr = MatMultAdd(P[ii], xlist[ii+1], xlist[ii], xlist[ii]); CHKERRQ(ierr);
+    if (ii == 0)
+    {
+      ierr = VecMDot(xlist[ii], nev_conv+1, BQ[ii], TempScal.data()); CHKERRQ(ierr);
+      TempScal *= -1;
+      ierr = VecMAXPY(xlist[ii], nev_conv+1, TempScal.data(), Q[ii]); CHKERRQ(ierr);
+    }
+    ierr = WJac(flist[ii], xlist[ii], ii); CHKERRQ(ierr);
+  }
+
+  ierr = PetscLogEventEnd(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
+  return 0;
+}
+
+/******************************************************************************/
+/**                        Weighted Jacobi smoother                          **/
+/******************************************************************************/
+PetscErrorCode JDMG::WJac(Vec y, Vec x, PetscInt level)
+{
+  // The y being fed in is -r, as it should be
+  PetscErrorCode ierr = 0;
+  ierr = PetscLogEventBegin(EIG_Jacobi, 0, 0, 0, 0); CHKERRQ(ierr);
+  if (nsweep == 0)
+    return 0;
+
+  Vec r;
+  ierr = VecDuplicate(y, &r); CHKERRQ(ierr);
+  for (int ii = 0; ii < nsweep; ii++)
+  {
+    ierr = ApplyOP(x, r, level); CHKERRQ(ierr);
+    ierr = VecAYPX(r, -1.0, y); CHKERRQ(ierr);
+    ierr = VecPointwiseDivide(r, r, Dlist[level]); CHKERRQ(ierr);
+    ierr = VecAXPY(x, w, r); CHKERRQ(ierr);
+  }
+  VecDestroy(&r);
+  ierr = PetscLogEventEnd(EIG_Jacobi, 0, 0, 0, 0); CHKERRQ(ierr);
 
   return 0;
 }

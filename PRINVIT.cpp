@@ -26,13 +26,9 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 /******************************************************************************/
 PRINVIT::PRINVIT()
 {
-  levels = 0;
   Qsize = nev_req;
   jmin = -1; jmax = -1;
-  nsweep = 5;
-  w = 4.0/7;
   PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &verbose, NULL);
-  cycle = FMGCycle;
 }
 
 /******************************************************************************/
@@ -40,8 +36,6 @@ PRINVIT::PRINVIT()
 /******************************************************************************/
 PRINVIT::~PRINVIT()
 {
-  for (unsigned int ii = 0; ii < P.size(); ii++)
-    MatDestroy(P.data()+ii);
 }
 
 /******************************************************************************/
@@ -56,86 +50,6 @@ PetscErrorCode PRINVIT::Set_Verbose(PetscInt verbose)
 }
 
 /******************************************************************************/
-/**                     Extract hierarchy from PCMG object                   **/
-/******************************************************************************/
-PetscErrorCode PRINVIT::PCMG_Extract(PC pcmg, bool isB, bool isA)
-{
-  PetscErrorCode ierr = 0;
-  if (this->verbose >= 3)
-    ierr = PetscFPrintf(comm, output, "Extracting hierarchy from PC object\n"); CHKERRQ(ierr);
-
-  KSP smoother;
-  ierr = PCMGGetLevels(pcmg, &levels); CHKERRQ(ierr);
-  P.resize(levels-1, NULL);
-  for (unsigned int ii = 1; ii < A.size(); ii++) {
-    ierr = MatDestroy(A.data()+ii); CHKERRQ(ierr);
-    A[ii] = NULL;
-  }
-  for (unsigned int ii = 1; ii < B.size(); ii++) {
-    ierr = MatDestroy(B.data()+ii); CHKERRQ(ierr);
-    B[ii] = NULL;
-  }
-  A.resize(levels, NULL); B.resize(levels, NULL);
-  for (PetscInt ii = levels-1, jj = 0; ii > 0; ii--, jj++)
-  {
-    ierr = PCMGGetInterpolation(pcmg, ii, P.data()+jj); CHKERRQ(ierr);
-    ierr = PetscObjectReference((PetscObject)P[jj]); CHKERRQ(ierr);
-    if (isA)
-    {
-      ierr = PCMGGetSmoother(pcmg, ii, &smoother); CHKERRQ(ierr);
-      ierr = KSPGetOperators(smoother, A.data()+jj+1, NULL); CHKERRQ(ierr);
-      ierr = PetscObjectReference((PetscObject)A[jj+1]); CHKERRQ(ierr);
-    }
-    if (isB)
-    {
-      ierr = PCMGGetSmoother(pcmg, ii-1, &smoother); CHKERRQ(ierr);
-      ierr = KSPGetOperators(smoother, B.data()+jj+1, NULL); CHKERRQ(ierr);
-      ierr = PetscObjectReference((PetscObject)B[jj+1]); CHKERRQ(ierr);
-    }
-  }
-
-  return 0;
-}
-
-/******************************************************************************/
-/**                            Use given hierarchy                           **/
-/******************************************************************************/
-PetscErrorCode PRINVIT::Set_Hierarchy(const std::vector<Mat> P, const std::vector<MPI_Comm> MG_comms)
-{
-  PetscErrorCode ierr = 0;
-  if (this->verbose >= 3)
-    ierr = PetscFPrintf(comm, output, "Setting hierarchy from list of interpolators\n"); CHKERRQ(ierr);
-
-  this->P = P;
-  for (unsigned int ii = 0; ii < this->P.size(); ii++)
-  {
-    ierr = PetscObjectReference((PetscObject)this->P[ii]); CHKERRQ(ierr);
-  }
-
-  for (unsigned int ii = 1; ii < A.size(); ii++) {
-    ierr = MatDestroy(A.data()+ii); CHKERRQ(ierr);
-    A[ii] = NULL;
-  }
-  for (unsigned int ii = 1; ii < B.size(); ii++) {
-    ierr = MatDestroy(B.data()+ii); CHKERRQ(ierr);
-    B[ii] = NULL;
-  }
-
-  levels = P.size()+1; A.resize(levels, NULL); B.resize(levels, NULL);
-  this->MG_comms.resize(levels);
-  if (MG_comms.size() == 0)
-    std::fill(this->MG_comms.begin(), this->MG_comms.end(), comm);
-  else if (MG_comms.size() == 1)
-    std::fill(this->MG_comms.begin(), this->MG_comms.end(), MG_comms[0]);
-  else if ((PetscInt)MG_comms.size() == levels)
-    this->MG_comms = MG_comms;
-  else
-    SETERRQ(comm, PETSC_ERR_ARG_SIZ, "List of communicators does not match size of hierarchy");
-
-  return ierr;
-}
-
-/******************************************************************************/
 /**             Computes the eigenmodes of the specified system              **/
 /******************************************************************************/
 PetscErrorCode PRINVIT::Compute()
@@ -147,7 +61,6 @@ PetscErrorCode PRINVIT::Compute()
 
   // Prep work
   ierr = PetscLogEventBegin(EIG_Initialize, 0, 0, 0, 0); CHKERRQ(ierr);
-  ierr = Create_Hierarchy(); CHKERRQ(ierr);
   ierr = Compute_Init(); CHKERRQ(ierr);
 
   // Initialize search subspace with interpolated coarse eigenvectors
@@ -180,7 +93,7 @@ PetscErrorCode PRINVIT::Compute()
   // Things needed in the computation loop
   Vec residual;
   VecDuplicate(Q[0][0], &residual);
-  PetscScalar rnorm = 0, rnorm_old = 0, Au_norm = 0, orth_norm = 0;
+  PetscReal rnorm = 0, rnorm_old = 0, Au_norm = 0, orth_norm = 0;
   MatrixPS W; ArrayPS S;
   PetscInt base_it = maxit; PetscScalar base_eps = eps;
   ierr = PetscLogEventEnd(EIG_Initialize, 0, 0, 0, 0); CHKERRQ(ierr);
@@ -208,50 +121,27 @@ PetscErrorCode PRINVIT::Compute()
 
       ierr = Update_Preconditioner(residual, rnorm, Au_norm); CHKERRQ(ierr);
 
-      if (this->verbose >= 2){
+      if (this->verbose >= 2) {
         ierr = Print_Status(rnorm); CHKERRQ(ierr);
       }
-      if (isnan(theta))
-      {
-	if (false) // Optional printing of information of projected eigenproblem encounters NaN
-        {
-	  if (myid == 0)
-	    cout << S << "\n";
-	  PetscViewer view;
-	  for (int ii = 0; ii < j; ii++)
-	  {
-	    char filename[20];
-	    sprintf(filename, "V_%ii.bin",ii+1);
-	    PetscViewerBinaryOpen(comm, filename, FILE_MODE_WRITE, &view);
-	    VecView(V[ii], view);
-	    PetscViewerDestroy(&view);
-	  }
-	  PetscViewerBinaryOpen(comm, "A.bin", FILE_MODE_WRITE, &view);
-	  MatView(A[0], view);
-	  PetscViewerDestroy(&view);
-	  PetscViewerBinaryOpen(comm, "B.bin", FILE_MODE_WRITE, &view);
-	  MatView(B[0], view);
-	  PetscViewerDestroy(&view);
-	  MPI_Barrier(comm);
-        }
+      if (isnan(theta)) {
         SETERRQ(comm, PETSC_ERR_FP, "Approximate eigenvalue is not a number");
       }
 
       ierr = PetscLogEventEnd(EIG_Prep, 0, 0, 0, 0); CHKERRQ(ierr);
-      if ( ( (rnorm/abs(theta) >= eps) && (rnorm_old != rnorm) && (rnorm/Au_norm >= 1e-12) ) || (j <= 1) )
-      {
+      if ( ( (rnorm/abs(theta) >= eps) && (rnorm_old != rnorm) && (rnorm/Au_norm >= 1e-12) ) || (j <= 1) ) {
         lambda(nev_conv) = theta;
         rnorm_old = rnorm;
         break;
       }
+
       ierr = PetscLogEventBegin(EIG_Convergence, 0, 0, 0, 0); CHKERRQ(ierr);
       // Convergence routine
       if (this->verbose >= 2)
         PetscFPrintf(comm, output, "Eigenvalue #%i converged with residual %1.4g after %i iterations\n", nev_conv+1, rnorm, it);
       tau_num = theta;
       lambda(nev_conv) = theta;
-      for (int ii = 0; ii < j; ii++)
-      {
+      for (int ii = 0; ii < j; ii++) {
         ierr = VecCopy(V[ii], TempVecs[ii]); CHKERRQ(ierr);
         ierr = VecSet(V[ii], 0.0); CHKERRQ(ierr);
       }
@@ -303,45 +193,36 @@ PetscErrorCode PRINVIT::Compute()
       G.block(0, 0, j, j) = S.segment(0,j).matrix().asDiagonal();
     }
 
-    // Shift parameter
+    // Get search space expansion vector
     ierr = PetscLogEventBegin(EIG_Update, 0, 0, 0, 0); CHKERRQ(ierr);
-
-    // Call the multigrid solver to solve correction equation
-    ierr = MGSetup(residual, rnorm); CHKERRQ(ierr);
-    if (cycle == VCycle)
-    {
-      ierr = MGSolve(V[j], residual); CHKERRQ(ierr);
-    }
-    else if (cycle == FMGCycle)
-    {
-      ierr = FullMGSolve(V[j], residual); CHKERRQ(ierr);
-    }
-    else
-      SETERRQ(comm, PETSC_ERR_SUP, "Invalid Multigrid cycle chosen");
+    ierr = Update_Search(V[j], residual, rnorm); CHKERRQ(ierr);
     ierr = PetscLogEventEnd(EIG_Update, 0, 0, 0, 0); CHKERRQ(ierr);
 
     ierr = PetscLogEventBegin(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
     // This loop is to prevent NaN breakdown
-    while (true)
-    {
+    while (true) {
       // Ensure orthogonality
       ierr = Mgsm(Q[0], BQ[0], V[j], nev_conv+1); CHKERRQ(ierr);
       ierr = Icgsm(V, B[0], V[j], orth_norm, j); CHKERRQ(ierr);
-      ierr = VecScale(V[j], 1/orth_norm); CHKERRQ(ierr);
+      ierr = Remove_NullSpace(this->B[0], V[j]); CHKERRQ(ierr);
+
+      // Re-normalize
+      ierr = MatMult(this->B[0], V[j], TempVecs[0]); CHKERRQ(ierr);
+      ierr = VecDot(V[j], TempVecs[0], &orth_norm); CHKERRQ(ierr);
+      ierr = VecScale(V[j], 1/sqrt(orth_norm)); CHKERRQ(ierr);
 
       // Update search space
       ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
       ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
       G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
-      ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
       
-      if (isnan(G(j,j)))
-      {
+      if (isnan(G(j,j))) {
         ierr = VecSetRandom(V[j], NULL); CHKERRQ(ierr);
       }
       else
         break;
     }
+    ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
 
     j++;
     if (it == maxit && eps/base_eps < 1000)
@@ -365,127 +246,17 @@ PetscErrorCode PRINVIT::Compute()
 }
 
 /******************************************************************************/
-/**               Apply full multigrid for correction equation               **/
+/**                        Remove Matrix NullSpace                           **/
 /******************************************************************************/
-PetscErrorCode PRINVIT::FullMGSolve(Vec x, Vec f)
+PetscErrorCode PRINVIT::Remove_NullSpace(Mat A, Vec x)
 {
   PetscErrorCode ierr = 0;
-  ierr = PetscLogEventBegin(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
-  if (this->verbose >= 3)
-    ierr = PetscFPrintf(comm, output, "Applying multigrid\n"); CHKERRQ(ierr);
 
-  // Set x and f at the top of the hierarchy
-  xlist[0] = x;
-  flist[0] = f;
-
-  // Project f onto lowest level
-  for (int ii = 0; ii < levels-1; ii++)
-  {
-    ierr = MatMultTranspose(P[ii], flist[ii], flist[ii+1]); CHKERRQ(ierr);
+  MatNullSpace nullsp;
+  ierr = MatGetNullSpace(A, &nullsp); CHKERRQ(ierr);
+  if (nullsp) {
+    ierr = MatNullSpaceRemove(nullsp, x); CHKERRQ(ierr);
   }
 
-  // FMG cycle
-  for (int ii = levels-1; ii >= 0; ii--)
-  {
-    // Downcycling
-    for (int jj = ii; jj < levels; jj++)
-    {
-      if (jj == levels-1)
-      {
-        // Coarse solve
-        ierr = Coarse_Solve(); CHKERRQ(ierr);
-      }
-      else
-      {
-        ierr = WJac(flist[jj], xlist[jj], jj); CHKERRQ(ierr);
-        ierr = ApplyOP(xlist[jj], OPx[jj], jj); CHKERRQ(ierr);
-        ierr = VecAYPX(OPx[jj], -1.0, flist[jj]); CHKERRQ(ierr);
-        ierr = MatMultTranspose(P[jj], OPx[jj], flist[jj+1]); CHKERRQ(ierr);
-        ierr = VecSet(xlist[jj+1], 0.0); CHKERRQ(ierr);
-      }
-    }
-    //Upcycling
-    for (int jj = levels-2; jj >= ii; jj--)
-    {
-      ierr = MatMultAdd(P[jj], xlist[jj+1], xlist[jj], xlist[jj]); CHKERRQ(ierr);
-      ierr = WJac(flist[jj], xlist[jj], jj); CHKERRQ(ierr);
-    }
-    if (ii > 0)
-    {
-      ierr = MatMult(P[ii-1], xlist[ii], xlist[ii-1]); CHKERRQ(ierr);
-    }
-  }
-
-  ierr = PetscLogEventEnd(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
-  return 0;
-}     
-
-/******************************************************************************/
-/**                 Apply multigrid for correction equation                  **/
-/******************************************************************************/
-PetscErrorCode PRINVIT::MGSolve(Vec x, Vec f)
-{
-  PetscErrorCode ierr = 0;
-  ierr = PetscLogEventBegin(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
-  if (this->verbose >= 3)
-    ierr = PetscFPrintf(comm, output, "Applying multigrid\n"); CHKERRQ(ierr);
-
-  // Set x and f at the top of the hierarchy
-  xlist[0] = x;
-  flist[0] = f;
-
-  // Downcycle
-  for (int ii = 0; ii < levels-1; ii++)
-  {
-    ierr = VecSet(xlist[ii], 0.0); CHKERRQ(ierr);
-    ierr = WJac(flist[ii], xlist[ii], ii); CHKERRQ(ierr);
-    ierr = ApplyOP(xlist[ii], OPx[ii], ii); CHKERRQ(ierr);
-    ierr = VecAYPX(OPx[ii], -1.0, flist[ii]); CHKERRQ(ierr);
-    ierr = MatMultTranspose(P[ii], OPx[ii], flist[ii+1]); CHKERRQ(ierr);
-  }
-
-  // Coarse solve
-  ierr = Coarse_Solve(); CHKERRQ(ierr);
-
-  // Upcycle
-  for (int ii = levels-2; ii >= 0; ii--)
-  {
-    ierr = MatMultAdd(P[ii], xlist[ii+1], xlist[ii], xlist[ii]); CHKERRQ(ierr);
-    if (ii == 0)
-    {
-      ierr = VecMDot(xlist[ii], nev_conv+1, BQ[ii], TempScal.data()); CHKERRQ(ierr);
-      TempScal *= -1;
-      ierr = VecMAXPY(xlist[ii], nev_conv+1, TempScal.data(), Q[ii]); CHKERRQ(ierr);
-    }
-    ierr = WJac(flist[ii], xlist[ii], ii); CHKERRQ(ierr);
-  }
-
-  ierr = PetscLogEventEnd(EIG_Precondition, 0, 0, 0, 0); CHKERRQ(ierr);
-  return 0;
-}
-
-/******************************************************************************/
-/**                        Weighted Jacobi smoother                          **/
-/******************************************************************************/
-PetscErrorCode PRINVIT::WJac(Vec y, Vec x, PetscInt level)
-{
-  // The y being fed in is -r, as it should be
-  PetscErrorCode ierr = 0;
-  ierr = PetscLogEventBegin(EIG_Jacobi, 0, 0, 0, 0); CHKERRQ(ierr);
-  if (nsweep == 0)
-    return 0;
-
-  Vec r;
-  ierr = VecDuplicate(y, &r); CHKERRQ(ierr);
-  for (int ii = 0; ii < nsweep; ii++)
-  {
-    ierr = ApplyOP(x, r, level); CHKERRQ(ierr);
-    ierr = VecAYPX(r, -1.0, y); CHKERRQ(ierr);
-    ierr = VecPointwiseDivide(r, r, Dlist[level]); CHKERRQ(ierr);
-    ierr = VecAXPY(x, w, r); CHKERRQ(ierr);
-  }
-  VecDestroy(&r);
-  ierr = PetscLogEventEnd(EIG_Jacobi, 0, 0, 0, 0); CHKERRQ(ierr);
-
-  return 0;
+  return ierr;
 }

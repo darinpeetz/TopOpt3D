@@ -12,46 +12,33 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
 
   /// Assemble stress stiffness matrix and get sensitivity information
-  if (dKsdy.size() == 0)
-  {
-    dKsdy.resize( topOpt->nLocElem*(long)std::pow(DE,2) );
-    ierr = MatDuplicate( topOpt->K, MAT_SHARE_NONZERO_PATTERN, &Ks ); CHKERRQ(ierr);
+  if (dKsdy.size() == 0) {
+    dKsdy.resize(topOpt->nLocElem*(long)std::pow(DE,2));
+    ierr = MatDuplicate(topOpt->K, MAT_SHARE_NONZERO_PATTERN, &Ks); CHKERRQ(ierr);
   }
   ierr = StressFnc( topOpt ); CHKERRQ(ierr);
 
-  /// Remove fixed and spring dof from M (and K if necessary)
+  /// Remove fixed dof from Ks
   ierr = MatZeroRowsColumns(Ks, topOpt->fixedDof.size(), topOpt->fixedDof.data(),
-             0.0, NULL, NULL); CHKERRQ(ierr);
-  if (topOpt->nSpringDof > 0)
-  {
-    ierr = MatZeroRowsColumns(Ks, topOpt->springDof.size(),
-            topOpt->springDof.data(), 0.0, NULL, NULL); CHKERRQ(ierr);
-    ierr = MatZeroRowsColumns(topOpt->K, topOpt->springDof.size(),
-            topOpt->springDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+                            0.0, NULL, NULL); CHKERRQ(ierr);
+  if (topOpt->nEigFixDof > 0) { // Fix additional parts of matrices if requested
+    ierr = MatZeroRowsColumns(Ks, topOpt->eigenFixedDof.size(),
+            topOpt->eigenFixedDof.data(), 0.0, NULL, NULL); CHKERRQ(ierr);
+    ierr = MatZeroRowsColumns(topOpt->K, topOpt->eigenFixedDof.size(),
+            topOpt->eigenFixedDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+    ierr = MatSetNullSpace(topOpt->K, NULL); CHKERRQ(ierr);
     ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
     ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
   }
 
   LOPGMRES lopgmres(topOpt->comm);
-  //lopgmres.Set_Verbose(4);
-  //lopgmres.Open_File("LOPGMRES_Output.txt");
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
 
-  // Get restrictors from FEM problem
-  PC pcmg; PCType pctype;
-  ierr = KSPGetPC(topOpt->KUF, &pcmg); CHKERRQ(ierr);
-  ierr = PCGetType(pcmg, &pctype); CHKERRQ(ierr);
-  /*if (!strcmp(pctype,PCMG))
-  {*/
-    ierr = lopgmres.Set_Hierarchy(topOpt->PR); CHKERRQ(ierr);
-  /*}
-  else if (!strcmp(pctype,PCGAMG))
-  {
-    ierr = lopgmres.PCMG_Extract(pcmg); CHKERRQ(ierr);
-  }
-  else
-     SETERRQ1(topOpt->comm, PETSC_ERR_ARG_WRONG, "Preconditioner of type %s was provided, but must be one of mg or gamg", pctype);*/
+  // Set the preconditioner
+  PC pc;
+  ierr = KSPGetPC(topOpt->KUF, &pc); CHKERRQ(ierr);
+  ierr = lopgmres.Set_PC(pc); CHKERRQ(ierr);
 
   // Set Operators
   lopgmres.Set_Operators(Ks, topOpt->K);
@@ -59,15 +46,13 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   Nev_Type target_type = UNIQUE_LAST_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
   lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
-  lopgmres.Set_Cycle(FMGCycle);
   lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
   // Compute the eigenvalues
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
 
   // Get the results
   PetscInt nev_conv = lopgmres.Get_nev_conv();
-  if (nev_conv == 0)
-  {
+  if (nev_conv == 0) {
     char name_suffix[30];
     sprintf(name_suffix, "_eigen_failure");
     ierr = topOpt->PrintVals(name_suffix); CHKERRQ(ierr);
@@ -89,8 +74,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   lopgmres.Get_Eigenvectors(&phi);
   topOpt->bucklingShape.resize(topOpt->bucklingShape.rows(), nev_conv);
   ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
-  for (int i = 0; i < nev_conv; i++)
-  {
+  for (int i = 0; i < nev_conv; i++) {
     ierr = VecPlaceArray(phi_copy, topOpt->bucklingShape.data() +
             i*topOpt->bucklingShape.rows()); CHKERRQ(ierr);
     ierr = VecCopy(phi[i], phi_copy);
@@ -103,32 +87,29 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   /// Dot product of eigenvectors expanded to triplet form
   /// to match unassembled stiffness matrices
   MatrixXPS phim( (DE*DE)*topOpt->gElem.rows(), nev_conv );
-  for (long el = 0; el < topOpt->gElem.rows(); el++)
-  {
+  for (long el = 0; el < topOpt->gElem.rows(); el++) {
     ArrayXPI eDof(DE);
-    for (int i = 0; i < NE; i++)
-    {
-    for (int j = 0; j < DN; j++)
-      eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
+    for (int i = 0; i < NE; i++) {
+      for (int j = 0; j < DN; j++)
+        eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
     }
 
-    for (int i = 0; i < DE; i++){
-    for (int j = 0; j < DE; j++){
-      phim.row( (DE*DE)*el + DE*i + j) =
-        topOpt->bucklingShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
-                topOpt->bucklingShape.block(eDof(i),0,1,nev_conv));
-    }
+    for (int i = 0; i < DE; i++) {
+      for (int j = 0; j < DE; j++) {
+        phim.row( (DE*DE)*el + DE*i + j) =
+          topOpt->bucklingShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
+                  topOpt->bucklingShape.block(eDof(i),0,1,nev_conv));
+      }
     }
   }
 
-  /// Stress Stiffness partial with respect to u (Es is factored out so this step is only needed once)
-  if (this->dKsdu.size() == 0)
-  {
+  /// Stress Stiffness partial with respect to u
+  /// (Es is factored out so this step is only needed once)
+  if (this->dKsdu.size() == 0) {
     short dDE = DE*DE;
     this->dKsdu.setZero(dDE , DE);
     // Loop over dof of a single element
-    for (int dof = 0; dof < DE; dof++)
-    {
+    for (int dof = 0; dof < DE; dof++) {
     Eigen::Map< MatrixXPS > dksdu( this->dKsdu.data() + dDE*dof, DE, DE );
     Eigen::VectorXd du = Eigen::VectorXd::Zero(DE);
     du(dof) = 1;
@@ -140,8 +121,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   }
 
   /// Construct adjoint vectors to be solved
-  if (topOpt->verbose >= 2)
-  {
+  if (topOpt->verbose >= 2) {
     ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Preparing to solve buckling"
                         " adjoint equations\n"); CHKERRQ(ierr);
   }
@@ -149,32 +129,16 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   v.resize(dKsdU.rows(), dKsdU.cols());
   const PetscScalar *p_Es;
   ierr = VecGetArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
-  for (PetscInt el = 0; el < topOpt->element.rows(); el++)
-  {
+  for (PetscInt el = 0; el < topOpt->element.rows(); el++) {
     MatrixXPS dKs = p_Es[el] * this->dKsdu;
-    for (int nd = 0; nd < NE; nd++)
-    {
-    if (topOpt->element(el,nd) < topOpt->nLocNode)
-      dKsdU.block(DN*topOpt->element(el,nd), 0, DN, nev_conv) +=
-        dKs.block(0, DN*nd, DE*DE, DN).transpose() *
-        phim.block(el*DE*DE, 0, DE*DE, nev_conv);
+    for (int nd = 0; nd < NE; nd++) {
+      if (topOpt->element(el,nd) < topOpt->nLocNode)
+        dKsdU.block(DN*topOpt->element(el,nd), 0, DN, nev_conv) +=
+          dKs.block(0, DN*nd, DE*DE, DN).transpose() *
+          phim.block(el*DE*DE, 0, DE*DE, nev_conv);
     }
   }
   ierr = VecRestoreArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
-
-  PC smooth_pc;
-  KSP smooth_ksp;
-  PetscInt nlevels;
-  /// Switch to weighted Jacobi smoothing 
-  ierr = PCMGGetLevels(pcmg, &nlevels); CHKERRQ(ierr);
-  for (int i = 1; i < nlevels; i++)
-  {
-    ierr = PCMGGetSmoother(pcmg, i, &smooth_ksp); CHKERRQ(ierr);
-    ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-    ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-    ierr = PCSetType(smooth_pc, PCJACOBI); CHKERRQ(ierr);
-  }
 
   /// Solve the adjoint problem
   // Vectors to be used with the solver
@@ -190,8 +154,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     dKsdU.row(topOpt->springDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
 
   // Solving each adjoint problem
-  for (short i = 0; i < nev_conv; i++)
-  {
+  for (short i = 0; i < nev_conv; i++) {
     ierr = VecPlaceArray( dKsdU_vec, dKsdU.data() + i*dKsdU.rows() ); CHKERRQ(ierr);
     ierr = VecPlaceArray( v_vec, v.data() + i*dKsdU.rows() ); CHKERRQ(ierr);
     ierr = VecSet(v_vec, 0.0); CHKERRQ(ierr);
@@ -200,14 +163,12 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     ierr = KSPGetIterationNumber(topOpt->KUF, &its); CHKERRQ(ierr);
     KSPConvergedReason reason;
     ierr = KSPGetConvergedReason(topOpt->KUF, &reason); CHKERRQ(ierr);
-    if (topOpt->verbose >= 1)
-    {
+    if (topOpt->verbose >= 1) {
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
                     "equation #%i converged in %i iterations with reason: %i\n",
                     i, its, reason); CHKERRQ(ierr);
     }
-    else
-    {
+    else {
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
                     "equation #%i failed with reason %i", i, reason); CHKERRQ(ierr);
     }
@@ -223,19 +184,17 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   Eigen::VectorXd Um( (DE*DE)*topOpt->nLocElem );
   const PetscScalar *p_U;
   ierr = VecGetArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
-  for (long el = 0; el < topOpt->nLocElem; el++)
-  {
+  for (long el = 0; el < topOpt->nLocElem; el++) {
     ArrayXPI eDof(DE);
-    for (int i = 0; i < NE; i++)
-    {
-    for (int j = 0; j < DN; j++)
-      eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
-    }
-    for (int i = 0; i < DE; i++){
-    for (int j = 0; j < DE; j++){
-      vm.row((DE*DE)*el + DE*i + j) = v.block(eDof(j),0,1,nev_conv);
-      Um((DE*DE)*el + DE*i + j) = p_U[eDof[i]];
-    }
+    for (int i = 0; i < NE; i++) {
+      for (int j = 0; j < DN; j++)
+        eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
+      }
+    for (int i = 0; i < DE; i++) {
+      for (int j = 0; j < DE; j++) {
+        vm.row((DE*DE)*el + DE*i + j) = v.block(eDof(j),0,1,nev_conv);
+        Um((DE*DE)*el + DE*i + j) = p_U[eDof[i]];
+      }
     }
   }
   ierr = VecRestoreArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
@@ -245,36 +204,31 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   ierr = VecGetArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
   Eigen::Map< const Eigen::VectorXd > dEdz(p_dEdz, topOpt->nLocElem);
   MatrixXPS dKdy;
-  if (topOpt->regular)
-  {
+  if (topOpt->regular) {
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
     dKdy = Eigen::kroneckerProduct(dEdz, ke);
   }
-  else
-  {
+  else {
     PetscInt ind = 0;
     for (unsigned int el = 0; el < topOpt->ke.size(); el++)
     ind += topOpt->ke[el].size();
     dKdy.resize(ind, 1);
     ind = 0;
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    for (unsigned int el = 0; el < topOpt->ke.size(); el++)
-    {
-    new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
-    dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
+    for (unsigned int el = 0; el < topOpt->ke.size(); el++) {
+      new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
+      dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
     }
   }
   ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
   MatrixXPS df = MatrixXPS::Zero(dKdy.rows(),nvals);
-  for (short j = 0; j < nvals-1; j++)
-  {
+  for (short j = 0; j < nvals-1; j++) {
     df.col(j) += phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
         + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um));
   }
-  for (short j = nvals-1; j < nev_conv; j++)
-  {
+  for (short j = nvals-1; j < nev_conv; j++) {
     df.col(nvals-1) += phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
         + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um));
   }
@@ -286,8 +240,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   /// dCdrhof*drhofdrho and power function accumulation
   Vec dlamdy;
   ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
-  for (short i = 0; i < nvals; i++)
-  {
+  for (short i = 0; i < nvals; i++) {
     ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
     ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
     ierr = VecResetArray( dlamdy ); CHKERRQ(ierr);
@@ -299,11 +252,11 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
   gradients *= std::pow((PetscScalar)values(0), 1-p);
 
-  if (nev_conv < nvals)
-  {
-    PetscFPrintf(topOpt->comm, topOpt->output, "***************************************************\n");
-    PetscFPrintf(topOpt->comm, topOpt->output, "Warning, nev_conv < nevals\n");
-    PetscFPrintf(topOpt->comm, topOpt->output, "***************************************************\n");
+  if (nev_conv < nvals) {
+    PetscFPrintf(topOpt->comm, topOpt->output,
+                 "*******************************************\n"
+                 "Warning, nev_conv < nevals\n"
+                 "*******************************************\n");
   }
 
   return 0;
@@ -394,43 +347,43 @@ MatrixXPS Stability::sigtos(VectorXPS sigma)
   {
     case 1: //1-D
     {
-    return sigma;
-    break;
+      return sigma;
+      break;
     }
     case 3:
     {
-    MatrixXPS s = MatrixXPS::Zero(4 , 4);
-    s(0,0) = sigma(0);
-    s(1,1) = sigma(1);
-    s(0,1) = sigma(2);
-    s(1,0) = sigma(2);
-    s.block(2, 2, 2, 2) = s.block(0, 0, 2, 2);
-    return s;
-    break;
+      MatrixXPS s = MatrixXPS::Zero(4 , 4);
+      s(0,0) = sigma(0);
+      s(1,1) = sigma(1);
+      s(0,1) = sigma(2);
+      s(1,0) = sigma(2);
+      s.block(2, 2, 2, 2) = s.block(0, 0, 2, 2);
+      return s;
+      break;
     }
     case 6:
     {
-    MatrixXPS s = MatrixXPS::Zero(9 , 9);
-    // Normal stresses
-    s(0,0) = sigma(0);
-    s(1,1) = sigma(1);
-    s(2,2) = sigma(2);
-    // xy shear
-    s(0,1) = sigma(3);
-    s(1,0) = sigma(3);
-    // xz shear
-    s(0,2) = sigma(5);
-    s(2,0) = sigma(5);
-    // yz shear
-    s(1,2) = sigma(4);
-    s(2,1) = sigma(4);
-    s.block(3, 3, 3, 3) = s.block(0, 0, 3, 3);
-    s.block(6, 6, 3, 3) = s.block(0, 0, 3, 3);
-    return s;
-    break;
+      MatrixXPS s = MatrixXPS::Zero(9 , 9);
+      // Normal stresses
+      s(0,0) = sigma(0);
+      s(1,1) = sigma(1);
+      s(2,2) = sigma(2);
+      // xy shear
+      s(0,1) = sigma(3);
+      s(1,0) = sigma(3);
+      // xz shear
+      s(0,2) = sigma(5);
+      s(2,0) = sigma(5);
+      // yz shear
+      s(1,2) = sigma(4);
+      s(2,1) = sigma(4);
+      s.block(3, 3, 3, 3) = s.block(0, 0, 3, 3);
+      s.block(6, 6, 3, 3) = s.block(0, 0, 3, 3);
+      return s;
+      break;
     }
     default:
-    std::cout << "INVALID SIZE OF STRESS VECTOR\n";
+      std::cout << "INVALID SIZE OF STRESS VECTOR\n";
     break;
   }
 

@@ -38,21 +38,25 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   /// Remove fixed and spring dof from M (and K if necessary)
   ierr = MatZeroRowsColumns(M, topOpt->fixedDof.size(),
              topOpt->fixedDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
-  if (topOpt->nSpringDof > 0)
-  {
-    ierr = MatZeroRowsColumns(M, topOpt->springDof.size(),
-             topOpt->springDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
-    ierr = MatZeroRowsColumns(topOpt->K, topOpt->springDof.size(),
-             topOpt->springDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+  if (topOpt->nEigFixDof > 0) { // Fix additional parts of matrices if requested
+    ierr = MatZeroRowsColumns(M, topOpt->eigenFixedDof.size(),
+            topOpt->eigenFixedDof.data(), 0.0, NULL, NULL); CHKERRQ(ierr);
+    ierr = MatZeroRowsColumns(topOpt->K, topOpt->eigenFixedDof.size(),
+            topOpt->eigenFixedDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+    ierr = MatSetNullSpace(topOpt->K, NULL); CHKERRQ(ierr);
     ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
+    ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
   }
 
   // Create LOPGMRES instance
   LOPGMRES lopgmres(topOpt->comm);
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
+  
   // Get restrictors from FEM problem
-  ierr = lopgmres.Set_Hierarchy(topOpt->PR, topOpt->MG_comms); CHKERRQ(ierr);
+  PC pc;
+  ierr = KSPGetPC(topOpt->KUF, &pc); CHKERRQ(ierr);
+  ierr = lopgmres.Set_PC(pc); CHKERRQ(ierr);
 
   // Set Operators
   lopgmres.Set_Operators(M, topOpt->K);
@@ -61,7 +65,6 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   lopgmres.Set_Target(LR, nvals, target_type);
   lopgmres.Set_Tol(std::pow(10, std::log10(2*topOpt->nNode)/2-9));
   lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
-  lopgmres.Set_Cycle(FMGCycle);
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
 
   // Get the results
