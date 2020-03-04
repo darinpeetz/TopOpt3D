@@ -25,7 +25,7 @@ PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
     ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
   }
 
-  PetscScalar eps = 0;//1e-10; // Minimum stiffness
+  PetscScalar eps = 0; // Minimum stiffness
   PetscScalar *p_x, *p_y; // Pointers
 
   // Apply the filter to design variables
@@ -37,12 +37,17 @@ PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
   // Maximum length scale filtering
   Vec z; // Used as a temporary vector initially
   ierr = VecDuplicate(this->y, &z); CHKERRQ(ierr);
-  ierr = VecSet(z, 1); CHKERRQ(ierr); // z=1
-  ierr = VecPointwiseMin(this->rho, this->rho, z); CHKERRQ(ierr);// Numerically rho can exceed 1, which causes problems
-  ierr = VecAXPY(z, -1, this->rho); CHKERRQ(ierr); // z=1-rho
-  ierr = VecPow(z, this->vdPenal); CHKERRQ(ierr); // z=(1-rho)^q
-  ierr = MatMultAdd(this->R, z, this->REdge, this->y); CHKERRQ(ierr); // y=R*z
-  ierr = VecScale(this->y, 1/this->vdMin); CHKERRQ(ierr); //y=R*z/vdmin
+  if (this->vdMin > 0) { // vdMin <= 0 means no max length
+    ierr = VecSet(z, 1); CHKERRQ(ierr); // z=1
+    ierr = VecPointwiseMin(this->rho, this->rho, z); CHKERRQ(ierr);// Numerically rho can exceed 1, which causes problems
+    ierr = VecAXPY(z, -1, this->rho); CHKERRQ(ierr); // z=1-rho
+    ierr = VecPow(z, this->vdPenal); CHKERRQ(ierr); // z=(1-rho)^q
+    ierr = MatMultAdd(this->R, z, this->REdge, this->y); CHKERRQ(ierr); // y=R*z
+    ierr = VecScale(this->y, 1/this->vdMin); CHKERRQ(ierr); //y=R*z/vdmin
+  }
+  else {
+    ierr = VecSet(this->y, 1); CHKERRQ(ierr);
+  }
   ierr = VecSet(z, 1); CHKERRQ(ierr); // z=1
   ierr = VecPointwiseMin(this->y, this->y, z); CHKERRQ(ierr); //y=min(R*z/vdmin, 1)
 
@@ -180,10 +185,4 @@ PetscErrorCode TopOpt::Chain_Filter(Vec dfdV, Vec dfdE)
   ierr = VecDestroy(&temp2); CHKERRQ(ierr);
 
   return ierr;
-
-
-
-
-
-  return 0;
 }
