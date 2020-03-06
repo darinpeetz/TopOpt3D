@@ -77,6 +77,7 @@ PetscErrorCode EigenShellSetUp(PC pc)
     for (PetscInt j = 0; j < n; j++) {
       eigenPC->Q[n*cols[j] + i] = vals[j];
     }
+    ierr = MatRestoreRow(A, i, &ncols, &cols, &vals); CHKERRQ(ierr);
   }
 
   // Call lapack routines to calculate eigenvalues and eigenvectors of system
