@@ -5,6 +5,7 @@
 #include <Eigen/Eigen>
 #include <numeric>
 #include <unsupported/Eigen/KroneckerProduct>
+#include <mpi.h> // Has to precede Petsc includes to use MPI::BOOL
 #include "TopOpt.h"
 #include "EigLab.h"
 
@@ -372,6 +373,17 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
     lrow = lcol;
     this->MG_comms.push_back(comm);
   }
+
+  // Read which elements are active
+  MPI_File fh;
+  this->active.resize(this->nLocElem);
+  ierr = MPI_File_open(this->comm, (folder + "/active.bin").c_str(), MPI_MODE_RDONLY,
+                       MPI_INFO_NULL, &fh); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, this->elmdist(myid) * this->nLocElem *
+                       sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_read_all(fh, this->active.data(), this->nLocElem,
+                            MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
                                                                                                      
   // Initial design values
   xIni.setOnes(nLocElem); xIni *= 0.5;
@@ -626,9 +638,9 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
     padding *= Nel(dim);
   // Global validity/numbering array
   Eigen::Array<bool, -1, 1> elemValidity = Eigen::Array<bool, -1, 1>::Ones(nLocElem);
-  Domain(elemCenters, elemValidity);
+  Domain(elemCenters, elemValidity, "Domain");
 
-   if (this->verbose >= 3)
+  if (this->verbose >= 3)
   {
     ierr = PetscFPrintf(this->comm, this->output, "Elements have been marked for removal\n");
                         CHKERRQ(ierr);
@@ -1219,11 +1231,6 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     elmdist(id) += elmdist(id-1);
 
   // Reset global and local element counts
-  if (this->verbose >= 1)
-  {
-    ierr = PetscPrintf(this->comm, "Reduced from %i to %i elements through domain restriction\n",
-                       this->nElem, this->elmdist(this->nprocs)); CHKERRQ(ierr);
-  }
   nLocElem = element.rows();
   nElem = elmdist(nprocs);
 
@@ -1971,4 +1978,20 @@ PetscErrorCode TopOpt::Localize()
     start = gElem.data()+nLocElem; finish = gElem.data()+gElem.size();
 
     return ierr;
+}
+
+/*****************************************************************/
+/*                Get centroids of all elements                 **/
+/*****************************************************************/
+MatrixXPS TopOpt::GetCentroids( )
+{
+  MatrixXPS elemCenters = Eigen::ArrayXXd::Zero(this->nLocElem,this->numDims);
+  for (PetscInt el = 0; el < this->nLocElem; el++) {
+    for (PetscInt nd = 0; nd < this->element.cols(); nd++) {
+      elemCenters.row(el) += this->node.row(this->element(el, nd));
+    }
+  }
+  elemCenters /= this->element.cols();
+
+  return elemCenters;
 }

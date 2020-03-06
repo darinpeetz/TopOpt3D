@@ -211,7 +211,7 @@ public:
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
-  PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity);
+  PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity, std::string key);
   PetscErrorCode Def_BC();
   PetscErrorCode Set_BC(ArrayXPS center, ArrayXPS radius,
                         ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE);

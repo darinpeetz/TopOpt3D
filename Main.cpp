@@ -64,7 +64,28 @@ int main(int argc, char **args)
                                 mg_levels, min_size); CHKERRQ(ierr);
       topOpt->Def_BC();
 
+      Eigen::Array<bool, -1, 1> elemValidity =
+              Eigen::Array<bool, -1, 1>::Zero(topOpt->nLocElem);
+      topOpt->active.setOnes(topOpt->nLocElem);
+      MatrixXPS elemCenters = topOpt->GetCentroids( );
       xIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
+      
+      topOpt->Domain(elemCenters, elemValidity, "Active");
+      for (PetscInt i = 0; i < elemValidity.size(); i++) {
+        if (elemValidity(i)) {
+          xIni(i) = 1;
+          topOpt->active(i) = false;
+        }
+      }
+      
+      elemValidity.setZero();
+      topOpt->Domain(elemCenters, elemValidity, "Passive");
+      for (PetscInt i = 0; i < elemValidity.size(); i++) {
+        if (elemValidity(i)) {
+          xIni(i) = 0;
+          topOpt->active(i) = false;
+        }
+      }
     }
 
     // Write out the mesh to file
@@ -74,7 +95,6 @@ int main(int argc, char **args)
     optmma->Set_Lower_Bound( Eigen::VectorXd::Constant(topOpt->nLocElem, 0) );
     optmma->Set_Upper_Bound( Eigen::VectorXd::Ones(topOpt->nLocElem) );
     optmma->Set_Values( xIni );
-    topOpt->active = Eigen::Array<bool, -1, 1>::Ones(topOpt->nLocElem);
     optmma->Set_n( topOpt->nLocElem );
 
     /// Initialze functions and FEM structures

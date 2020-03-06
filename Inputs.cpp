@@ -529,21 +529,22 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
 
   // Parse the file
   ArrayXXPS D = ArrayXXPS::Zero(Points.rows(), 0);
+  char enter[30], exit[30];
+  sprintf(enter, "[%s]", key.c_str());
+  sprintf(exit, "[/%s]", key.c_str());
   while (!file.eof())
   {
     if (!active_section)
     {
-      active_section = !line.compare("[Domain]");
+      active_section = !line.compare(enter);
       getline(file, line);
       file >> line;
     }
     else
     {
-      if (!line.compare("[/Domain]"))
+      if (!line.compare(exit))
       {
-        if (D.cols() == 0) // No domain info specified
-          elemValidity.setOnes(Points.rows());
-        else
+        if (D.cols() > 0) // Only set if domain was specified
           elemValidity = (D.col(D.cols()-1) < 0.0);
         return ierr;
       }

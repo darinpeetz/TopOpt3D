@@ -309,6 +309,19 @@ PetscErrorCode TopOpt::MeshOut()
   ierr = VecView(this->REdge, view); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
+  // Writing active element list
+  ierr = MPI_File_open(this->comm, "active.bin", MPI_MODE_CREATE |
+             MPI_MODE_WRONLY | MPI_MODE_DELETE_ON_CLOSE, MPI_INFO_NULL, &fh);
+         CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+  ierr = MPI_File_open(this->comm, "active.bin", MPI_MODE_CREATE |
+                       MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, this->elmdist(myid) * this->nLocElem *
+                       sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_write_all(fh, this->active.data(), this->nLocElem,
+                            MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
+  ierr = MPI_File_close(&fh); CHKERRQ(ierr);
+
   // Writing projecting matrices
   ArrayXPI lcol(this->nprocs);
   for (unsigned int i = 0; i < this->PR.size(); i++)
@@ -339,10 +352,6 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
                     const Eigen::VectorXd &cons, int it, long nactive )
 {
   PetscErrorCode ierr = 0;
-  PetscInt totactive = nactive;
-  MPI_Request request;
-  ierr = MPI_Iallreduce(MPI_IN_PLACE, &totactive, 1, MPI_PETSCINT, MPI_SUM,
-            comm, &request); CHKERRQ(ierr);
 
   // Print out values at every step if desired
   if ((print_every - ++last_print) == 0)
@@ -355,11 +364,8 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
   // So we print at iteration 10, 20, 30, etc. instead of 9, 19, 29...
   last_print *= (it > 0);
 
-  ierr = MPI_Wait(&request, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   // Print out total objective and constraint values
   ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", it); CHKERRQ(ierr);
-  ierr = PetscFPrintf(comm, output, "Active design variables: %i\n", totactive);
-          CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Objective: %1.6g\n", f); CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Constraints:\n"); CHKERRQ(ierr);
   for (short i = 0; i < cons.size(); i++)
