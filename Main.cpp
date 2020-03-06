@@ -70,7 +70,7 @@ int main(int argc, char **args)
       MatrixXPS elemCenters = topOpt->GetCentroids( );
       xIni = 0.5*Eigen::VectorXd::Ones(topOpt->nLocElem);
       
-      topOpt->Domain(elemCenters, elemValidity, "Active");
+      topOpt->Domain(elemCenters, elemValidity, "Solid");
       for (PetscInt i = 0; i < elemValidity.size(); i++) {
         if (elemValidity(i)) {
           xIni(i) = 1;
@@ -79,7 +79,7 @@ int main(int argc, char **args)
       }
       
       elemValidity.setZero();
-      topOpt->Domain(elemCenters, elemValidity, "Passive");
+      topOpt->Domain(elemCenters, elemValidity, "Void");
       for (PetscInt i = 0; i < elemValidity.size(); i++) {
         if (elemValidity(i)) {
           xIni(i) = 0;
