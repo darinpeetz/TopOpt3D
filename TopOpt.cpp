@@ -316,8 +316,8 @@ PetscErrorCode TopOpt::MeshOut()
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
   ierr = MPI_File_open(this->comm, "active.bin", MPI_MODE_CREATE |
                        MPI_MODE_WRONLY, MPI_INFO_NULL, &fh); CHKERRQ(ierr);
-  ierr = MPI_File_seek(fh, this->elmdist(myid) * this->nLocElem *
-                       sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, this->elmdist(myid) * sizeof(bool),
+                       MPI_SEEK_SET); CHKERRQ(ierr);
   ierr = MPI_File_write_all(fh, this->active.data(), this->nLocElem,
                             MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
