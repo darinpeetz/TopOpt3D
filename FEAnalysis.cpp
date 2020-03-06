@@ -258,7 +258,6 @@ int TopOpt::FEAssemble( )
       ke = p_E[el]*this->ke[el];
     else
       ke = p_E[el]*this->ke[0];
-    }
     for (short nd = 0; nd < element.cols(); nd++)
       cols[nd] = this->gNode(this->element(el, nd));
     for (short nd = 0; nd < element.cols(); nd++)
