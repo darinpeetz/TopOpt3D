@@ -47,12 +47,6 @@ PetscErrorCode EigenShellSetUp(PC pc)
   ierr = PCGetOperators(pc, &A, NULL); CHKERRQ(ierr);
   ierr = MatGetSize(A, &eigenPC->n, NULL); CHKERRQ(ierr);
   ierr = MatGetLocalSize(A, &eigenPC->nLoc, NULL); CHKERRQ(ierr);
-  
-  PetscViewer view;
-  ierr = PetscViewerBinaryOpen(PetscObjectComm((PetscObject)A), "coarse_K",
-                               FILE_MODE_WRITE, &view); CHKERRQ(ierr);
-  ierr = MatView(A, view); CHKERRQ(ierr);
-  ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
 
   if (eigenPC->nLoc == 0)
     return 0;
@@ -91,36 +85,28 @@ PetscErrorCode EigenShellSetUp(PC pc)
   dsteqr_(&c, &n, eigenPC->lam, e, eigenPC->Q, &n, work, &info);
 
   // Invert eigenvalues. Small eigenvalues (rigid modes) are set to zero
-  PetscScalar lamMax = eigenPC->lam[n-1];
-  if (eigenPC->lam[0] > 1e-6*eigenPC->lam[n-1]) {
-    ierr = PetscPrintf(PetscObjectComm((PetscObject)pc), "Warning, all eigenvalues are "
-                       "of similar magnitude in coarse operator.\nRoutines will assume "
-                       "that the coarse operator has no non-rigid modes\n"); CHKERRQ(ierr);
-    lamMax = 1e7*lamMax;
+  PetscInt ind = 0;
+  while (true) {
+    if (std::abs(eigenPC->lam[ind] / eigenPC->lam[ind+1]) < 1e-3) {
+      eigenPC->lam[ind++] = 0;
+      break;
+    }
+    else {
+      eigenPC->lam[ind++] = 0;
+    }
+    if (ind == n-1) {
+      eigenPC->lam[ind] = 0;
+      ierr = PetscPrintf(PetscObjectComm((PetscObject)pc), "Warning, all eigenvalues are "
+                        "of similar magnitude in coarse operator.\nRoutines will assume "
+                        "that the coarse operator has no non-rigid modes\n"); CHKERRQ(ierr);
+      ind++;
+      break;
+    }
   }
-
-      std::ofstream file;
-      file.open("lambda");
-      for (int i = 0; i < n; i++)
-        file << eigenPC->lam[i] << "\n";
-      file.close();
-
-
-  for (PetscInt i = 0; i < n; i++) {
-    if (eigenPC->lam[i] < 1e-6*lamMax)
-      eigenPC->lam[i] = 0;
-    else
-      eigenPC->lam[i] = 1/eigenPC->lam[i];
+  while (ind < n) {
+    eigenPC->lam[ind] = 1/eigenPC->lam[ind];
+    ind++;
   }
-
-      file.open("lambda_inverse");
-      for (int i = 0; i < n; i++)
-        file << eigenPC->lam[i] << "\n";
-      file.close();
-      file.open("Q");
-      for (int i = 0; i < n*n; i++)
-        file << eigenPC->Q[i] << "\n";
-      file.close();
 
   eigenPC->SetUp = true;
   delete[] e; delete[] tau; delete[] work;
