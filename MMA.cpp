@@ -72,7 +72,7 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   {
     OCeta = 0.5;
     OCMove = 0.2;
-    ierr = MMAsub(dfdx, g, dgdx);
+    ierr = OCsub(dfdx, g, dgdx);
   }
   else
     ierr = MMAsub(dfdx, g, dgdx);
@@ -118,13 +118,10 @@ int MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx
   while (l2-l1 > 1e-4)
   {
     double lmid = 0.5*(l1+l2);
-    B = (dfdx.cwiseQuotient(dgdx.transpose())).cwiseAbs()/lmid;
-    for (uint i = 0; i < nactive; i++)
-      temp(i) = pow(B(i), OCeta);
-    xCnd = *p_xmin + (xold1-*p_xmin).cwiseProduct(temp);
-    for (uint i = 0; i < nactive; i++)
-      (*p_x)(i) = std::max( std::max( std::min( std::min(xCnd(i), xold1(i)+step(i)),
-                                    (*p_xmax)(i)), xold1(i)-step(i)), (*p_xmin)(i));
+    dfdx = dfdx.cwiseMin(Eigen::VectorXd::Zero(dfdx.size()));
+    B = (-dfdx.cwiseQuotient(dgdx)/lmid).array().pow(OCeta).matrix();
+    xCnd = *p_xmin + (xold1-*p_xmin).cwiseProduct(B);
+    *p_x = xCnd.cwiseMin(xold1+step).cwiseMin(*p_xmax).cwiseMax(xold1-step).cwiseMax(*p_xmin);
 
     dg = dgdx.col(0).dot(*p_x-xold1);
     ierr = MPI_Allreduce(MPI_IN_PLACE, &dg, 1, MPI_DOUBLE, MPI_SUM, Comm);
