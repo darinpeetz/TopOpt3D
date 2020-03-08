@@ -68,7 +68,7 @@ PetscErrorCode EigenShellSetUp(PC pc)
   std::fill(eigenPC->Q, eigenPC->Q + n*n, 0);
   for (PetscInt i = 0; i < n; i++) {
     ierr = MatGetRow(A, i, &ncols, &cols, &vals);
-    for (PetscInt j = 0; j < n; j++) {
+    for (PetscInt j = 0; j < ncols; j++) {
       eigenPC->Q[n*cols[j] + i] = vals[j];
     }
     ierr = MatRestoreRow(A, i, &ncols, &cols, &vals); CHKERRQ(ierr);
