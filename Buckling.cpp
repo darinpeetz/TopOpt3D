@@ -25,10 +25,21 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     ierr = MatZeroRowsColumns(Ks, topOpt->eigenFixedDof.size(),
             topOpt->eigenFixedDof.data(), 0.0, NULL, NULL); CHKERRQ(ierr);
     ierr = MatZeroRowsColumns(topOpt->K, topOpt->eigenFixedDof.size(),
-            topOpt->eigenFixedDof.data(), 1.0, NULL, NULL); CHKERRQ(ierr);
+            topOpt->eigenFixedDof.data(), 1e8, NULL, NULL); CHKERRQ(ierr);
     ierr = MatSetNullSpace(topOpt->K, NULL); CHKERRQ(ierr);
     ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
     ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
+
+    ierr = KSPGetPC(topOpt->KUF, &pc); CHKERRQ(ierr);
+    ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
+    KSP smooth_ksp; PC smooth_pc;
+    for (int i = 1; i < levels; i++) {
+      ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+      ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
+      ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
+      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+      ierr = PCSetType(smooth_pc, PCPBJACOBI); CHKERRQ(ierr);
+    }
   }
 
   LOPGMRES lopgmres(topOpt->comm);
@@ -36,14 +47,13 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   lopgmres.Set_File(topOpt->output);
 
   // Set the preconditioner
-  PC pc;
   ierr = KSPGetPC(topOpt->KUF, &pc); CHKERRQ(ierr);
   ierr = lopgmres.Set_PC(pc); CHKERRQ(ierr);
 
   // Set Operators
   lopgmres.Set_Operators(Ks, topOpt->K);
   // Set target eigenvalues
-  Nev_Type target_type = UNIQUE_LAST_NEV;
+  Nev_Type target_type = TOTAL_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
   lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
   lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
@@ -223,41 +233,23 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
-  MatrixXPS df = MatrixXPS::Zero(dKdy.rows(),nvals);
-  for (short j = 0; j < nvals-1; j++) {
-    df.col(j) += phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
-        + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um));
+  VectorXPS df = VectorXPS::Zero(dKdy.rows());
+  for (short j = 0; j < nev_conv; j++) {
+    df += (phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
+        + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um))) * std::pow((PetscScalar)lambda(j), p-1);
   }
-  for (short j = nvals-1; j < nev_conv; j++) {
-    df.col(nvals-1) += phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
-        + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um));
-  }
-  df.col(nvals-1) /= nev_conv-nvals+1;
   
-  for (long el = 0; el < topOpt->nLocElem; el++)
-    gradients.row(el) = df.block(el*(DE*DE), 0, (DE*DE), nvals).colwise().sum();
+  for (PetscInt el = 0; el < topOpt->nLocElem; el++)
+    gradients(el) = df.segment(el*(DE*DE), DE*DE).sum();
+  gradients *= std::pow((PetscScalar)values(0), 1-p);
 
   /// dCdrhof*drhofdrho and power function accumulation
   Vec dlamdy;
-  ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
-  for (short i = 0; i < nvals; i++) {
-    ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
-    ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
-    ierr = VecResetArray( dlamdy ); CHKERRQ(ierr);
-    if (i == 0)
-      gradients.col(0) *= std::pow((PetscScalar)lambda(0), p-1);
-    else
-      gradients.col(0) += std::pow((PetscScalar)lambda(i), p-1)*gradients.col(i);
-  }
-  ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
-  gradients *= std::pow((PetscScalar)values(0), 1-p);
-
-  if (nev_conv < nvals) {
-    PetscFPrintf(topOpt->comm, topOpt->output,
-                 "*******************************************\n"
-                 "Warning, nev_conv < nevals\n"
-                 "*******************************************\n");
-  }
+  ierr = VecDuplicate(topOpt->dEdz, &dlamdy); CHKERRQ(ierr);
+  ierr = VecPlaceArray(dlamdy, gradients.data()); CHKERRQ(ierr);
+  ierr = topOpt->Chain_Filter(NULL, dlamdy); CHKERRQ(ierr);
+  ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
+  ierr = VecDestroy(&dlamdy); CHKERRQ(ierr);
 
   return 0;
 }

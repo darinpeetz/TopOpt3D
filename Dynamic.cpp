@@ -79,15 +79,9 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   VectorXPS lambda(nev_conv);
   lopgmres.Get_Eigenvalues(lambda.data());
 
-  // Number of converged eigenvalues to use for optimization
-  nev_conv -= (target_type == TOTAL_NEV) ? 0 : 1;
-
-  // Mertge any duplicate eigenvalues
-  for (short j = 0; j < nvals-1; j++)
-    values(j) = lambda[j];
-  for (short j = nvals-1; j < nev_conv; j++)
-    values(nvals-1) = lambda[j];
-  values(nvals-1) /= nev_conv-nvals+1;
+  // Aggregate eigenvalues
+  PetscScalar p = 8; //TODO: make this an option to set
+  values[0] = std::pow((PetscScalar)lambda.pow(p).sum(), 1/p);
 
   // Return if sensitivities aren't needed
   if (calc_gradient == PETSC_FALSE)
@@ -158,26 +152,22 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
-  MatrixXPS df = MatrixXPS::Zero((DE*DE)*topOpt->nLocElem,nvals);
+  VectorXPS df = VectorXPS::Zero(dKdy.rows();
   for (short j = 0; j < nvals-1; j++)
-    df.col(j) += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy);
-  for (short j = nvals-1; j < nev_conv; j++)
-    df.col(nvals-1) += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy);
-  df.col(nvals-1) /= nev_conv-nvals+1;
+    df += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy) *
+          std::pow((PetscScalar)lambda(j), p-1);
 
   for (long el = 0; el < topOpt->nLocElem; el++)
-    gradients.row(el) = df.block(el*(DE*DE), 0, (DE*DE), nvals).colwise().sum();
+    gradients(el) = df.segment(el*(DE*DE), DE*DE).sum();
+  gradients *= std::pow((PetscScalar)values(0), 1-p);
 
   /// dCdrhof*drhofdrho
   Vec dlamdy;
-  ierr = VecDuplicate( topOpt->dEdz, &dlamdy ); CHKERRQ(ierr);
-  for (short i = 0; i < nvals; i++)
-  {
-    ierr = VecPlaceArray( dlamdy, gradients.data()+i*gradients.rows() ); CHKERRQ(ierr);
-    ierr = topOpt->Chain_Filter( NULL, dlamdy ); CHKERRQ(ierr);
-    ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
-  }
-  ierr = VecDestroy( &dlamdy ); CHKERRQ(ierr);
+  ierr = VecDuplicate(topOpt->dEdz, &dlamdy); CHKERRQ(ierr);
+  ierr = VecPlaceArray(dlamdy, gradients.data()); CHKERRQ(ierr);
+  ierr = topOpt->Chain_Filter(NULL, dlamdy); CHKERRQ(ierr);
+  ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
+  ierr = VecDestroy(&dlamdy); CHKERRQ(ierr);
 
   return 0;
 }
