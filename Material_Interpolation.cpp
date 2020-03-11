@@ -17,12 +17,12 @@ typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
  * 
  * @return ierr: PetscErrorCode
  *******************************************************************/
-PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
+PetscErrorCode TopOpt::MatIntFnc(const Eigen::VectorXd &design)
 {
   PetscErrorCode ierr = 0;
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(comm, output, "Interpolating design variables to material parameters\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(comm, output, "Interpolating design variables "
+                        "to material parameters\n"); CHKERRQ(ierr);
   }
 
   PetscScalar eps = 0; // Minimum stiffness
@@ -39,7 +39,8 @@ PetscErrorCode TopOpt::MatIntFnc( const Eigen::VectorXd &design )
   ierr = VecDuplicate(this->y, &z); CHKERRQ(ierr);
   if (this->vdMin > 0) { // vdMin <= 0 means no max length
     ierr = VecSet(z, 1); CHKERRQ(ierr); // z=1
-    ierr = VecPointwiseMin(this->rho, this->rho, z); CHKERRQ(ierr);// Numerically rho can exceed 1, which causes problems
+    // Numerically rho can exceed 1, which causes problems
+    ierr = VecPointwiseMin(this->rho, this->rho, z); CHKERRQ(ierr);
     ierr = VecAXPY(z, -1, this->rho); CHKERRQ(ierr); // z=1-rho
     ierr = VecPow(z, this->vdPenal); CHKERRQ(ierr); // z=(1-rho)^q
     ierr = MatMultAdd(this->R, z, this->REdge, this->y); CHKERRQ(ierr); // y=R*z
@@ -155,15 +156,13 @@ PetscErrorCode TopOpt::Chain_Filter(Vec dfdV, Vec dfdE)
   ierr = VecDuplicate(this->x, &temp2); CHKERRQ(ierr);
 
   // Derivatives with respect to volume
-  if (dfdV)
-  {
+  if (dfdV) {
     ierr = MatMultTranspose(this->P, dfdV, temp1); CHKERRQ(ierr);
     ierr = VecCopy(temp1, dfdV); CHKERRQ(ierr);
   }
 
   // Derivatives with respect to stiffness
-  if (dfdE)
-  {
+  if (dfdE) {
     PetscScalar *p_Vec;
     ierr = VecPointwiseMult(temp2, dfdE, this->rho); CHKERRQ(ierr);
     ierr = MatMultTranspose(this->R, temp2, temp1); CHKERRQ(ierr);

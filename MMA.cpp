@@ -7,9 +7,12 @@
 
 using namespace std;
 
-/*************************************************************************/
-/**                      Preallocate some arrays                        **/
-/*************************************************************************/
+/********************************************************************
+ * Preallocate some arrays
+ * 
+ * @return void
+ * 
+ *******************************************************************/
 void MMA::Initialize()
 {
   /// These variables are usually not going to change, but the user should have the option
@@ -24,10 +27,15 @@ void MMA::Initialize()
   nactive = nloc;
 }
 
-/*************************************************************************/
-/**                     Set number of constraints                       **/
-/*************************************************************************/
-void MMA::Set_m( uint mval )
+/********************************************************************
+ * Set the number of constraints
+ * 
+ * @param mval: Number of constraints
+ * 
+ * @return void
+ * 
+ *******************************************************************/
+void MMA::Set_m(uint mval)
 {
   m = mval;
   /// These parameters should be set by user, but can't hurt to have a default
@@ -41,15 +49,20 @@ void MMA::Set_m( uint mval )
   return;
 }
 
-/*************************************************************************/
-/**                      Generic update routine                         **/
-/*************************************************************************/
-// sizes: dfdx=nx1, g=mx1, dgdx=nxm
-int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+/********************************************************************
+ * Generic optimization update routine
+ * 
+ * @param dfdx: Objective gradient (size nx1)
+ * @param g: Constraint values (size mx1)
+ * @param dgdx: Constraint gradients (size nxm)
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
+int MMA::Update(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
   int ierr = 0;
-  if (nactive != dfdx.size())
-  {
+  if (nactive != dfdx.size()) {
     if (myid == 0) {
       printf("Error dectected at line %i in file %s\n", __LINE__, __FILE__);
       printf("Objective gradient vector size (%li) does not match number of "
@@ -57,8 +70,7 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
     }
     return 60;
   }
-  if (nactive != dgdx.rows())
-  {
+  if (nactive != dgdx.rows()) {
     if (myid == 0) {
       printf("Error dectected at line %i in file %s\n", __LINE__, __FILE__);
       printf("Constraint gradient vectors size (%li) does not match number of "
@@ -68,10 +80,8 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   }
   /// At some point I plan to correctly implement OC-type update for simple problems
   Set_m(g.size());
-  if (m < 2)
-  {
+  if (m < 2) {
     OCeta = 0.5;
-    OCMove = 0.2;
     ierr = OCsub(dfdx, g, dgdx);
   }
   else
@@ -80,17 +90,23 @@ int MMA::Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   return ierr;
 }
 
-/*************************************************************************/
-/**                         OC update routine                           **/
-/*************************************************************************/
-int MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+/********************************************************************
+ * OC update routine
+ * 
+ * @param dfdx: Objective gradient (size nx1)
+ * @param g: Constraint values (size mx1)
+ * @param dgdx: Constraint gradients (size nxm)
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
+int MMA::OCsub(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
   int ierr = 0;
 
   // Grab active design variables
   Eigen::VectorXd *p_x, x, *p_xmin, xmin_act, *p_xmax, xmax_act;
-  if (nactive == nloc)
-  {
+  if (nactive == nloc) {
     xold1 = xval;
     p_x = &xval;
     p_xmin = &xmin;
@@ -112,11 +128,10 @@ int MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx
     xold1 = x;
   }
 
-  Eigen::VectorXd step = OCMove*(*p_xmax-*p_xmin);
+  Eigen::VectorXd step = move*(*p_xmax-*p_xmin);
   Eigen::VectorXd temp(nactive), B(nactive), xCnd(nactive);
   double l1 = 0, l2 = 1e6, dg;
-  while (l2-l1 > 1e-4)
-  {
+  while (l2-l1 > 1e-4) {
     double lmid = 0.5*(l1+l2);
     dfdx = dfdx.cwiseMin(Eigen::VectorXd::Zero(dfdx.size()));
     B = (-dfdx.cwiseQuotient(dgdx)/lmid).array().pow(OCeta).matrix();
@@ -128,8 +143,7 @@ int MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx
     if (ierr != 0) {
       if (myid == 0)
         printf("Error in MPI_Allreduce at line %i in file %s\n",
-               __LINE__, __FILE__);
-      MPI_Barrier(Comm);
+               __LINE__, __FILE__);\
       return ierr;
     }
 
@@ -147,14 +161,26 @@ int MMA::OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx
     }
   }
 
+  for (long i = 0; i < nloc; i++) {
+    if (active[i] && xval(i) < 1e-6)
+      xval(i) = 0;
+  }
+
   Change = ((xval-xold1).cwiseQuotient(xmax-xmin)).cwiseAbs().maxCoeff();
   return ierr;
 }
 
-/*************************************************************************/
-/**                      Construct MMA subproblem                       **/
-/*************************************************************************/
-int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+/********************************************************************
+ * Construct MMA subproblem
+ * 
+ * @param dfdx: Objective gradient (size nx1)
+ * @param g: Constraint values (size mx1)
+ * @param dgdx: Constraint gradients (size nxm)
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
+int MMA::MMAsub(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
   int ierr = 0;
 
@@ -162,8 +188,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   Eigen::VectorXd *p_x, x, *p_x1, x1, *p_x2, x2;
   Eigen::VectorXd *p_xmin, xmin_act, *p_xmax, xmax_act;
   Eigen::VectorXd low_act, upp_act;
-  if (nactive == nloc)
-  {
+  if (nactive == nloc) {
     p_x = &xval;
     p_x1 = &xold1;
     p_x2 = &xold2;
@@ -198,13 +223,11 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   }
 
   /// Asymptote Calculation (low and upp)
-  if (fresh_start && iter < 3)
-  {
+  if (fresh_start && iter < 3) {
     *p_low = *p_x-asyinit*(*p_xmax-*p_xmin);
     *p_upp = *p_x+asyinit*(*p_xmax-*p_xmin);
   }
-  else
-  {
+  else {
     fresh_start = false;
     zzz = (*p_x-*p_x1).cwiseProduct(*p_x1-*p_x2);
     factor = Eigen::VectorXd::Ones(nactive);
@@ -232,18 +255,16 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
 
   /// Calculation of the bounds alfa and beta
   Eigen::VectorXd zzz1 = *p_low + albefa*(*p_x-*p_low);
-  Eigen::VectorXd zzz2 = *p_x - mmamove*(*p_xmax-*p_xmin);
+  Eigen::VectorXd zzz2 = *p_x - move*(*p_xmax-*p_xmin);
   alfa.resize(nactive);
-  for (uint i = 0; i < nactive; i++)
-  {
+  for (uint i = 0; i < nactive; i++) {
     zzz(i) = std::max(zzz1(i),zzz2(i));
     alfa(i) = std::max(zzz(i),(*p_xmin)(i));
   }
   zzz1 = *p_upp - albefa*(*p_upp-*p_x);
-  zzz2 = *p_x + mmamove*(*p_xmax-*p_xmin);
+  zzz2 = *p_x + move*(*p_xmax-*p_xmin);
   beta.resize(nactive);
-  for (uint i = 0; i < nactive; i++)
-  {
+  for (uint i = 0; i < nactive; i++) {
     zzz(i) = std::min(zzz1(i),zzz2(i));
     beta(i) = std::min(zzz(i),(*p_xmax)(i));
   }
@@ -261,8 +282,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
 
   p0.setZero(nactive);
   q0.setZero(nactive);
-  for (uint i = 0; i < nactive; i++)
-  {
+  for (uint i = 0; i < nactive; i++) {
     p0(i) = std::max(dfdx(i),0.0);
     q0(i) = std::max(-dfdx(i),0.0);
   }
@@ -274,10 +294,8 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
 
   P.resize(nactive, m);
   Q.resize(nactive, m);
-  for (long i = 0; i < nactive; i++)
-  {
-    for (int j = 0; j < m; j++)
-    {
+  for (long i = 0; i < nactive; i++) {
+    for (int j = 0; j < m; j++) {
       P(i, j) = std::max(dgdx(i,j),0.0);
       Q(i, j) = std::max(-dgdx(i,j),0.0);
     }
@@ -285,8 +303,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   //Eigen::MatrixXd PQ = 0.001*(P + Q) + raa0*xmamiinv.replicate(1,m);
   //P = P + PQ;
   //Q = Q + PQ;
-  for (int i = 0; i < m; i++)
-  {
+  for (int i = 0; i < m; i++) {
     P.col(i) = P.col(i).cwiseProduct(ux2);
     Q.col(i) = Q.col(i).cwiseProduct(xl2);
   }
@@ -300,9 +317,7 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   *p_x2 = *p_x1; *p_x1 = *p_x;
   ///Solving the subproblem by a primal-dual Newton Method (or not)
   if (nproc > 1)
-  {
     ierr = DualSolve(*p_x);
-  }
   else
     ierr = DualSolve(*p_x);
 
@@ -325,9 +340,14 @@ int MMA::MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgd
   return ierr;
 }
 
-/*************************************************************************/
-/**            Solve the subproblem with a dual Newton method           **/
-/*************************************************************************/
+/********************************************************************
+ * Solve the subproblem using a dual Newton method
+ * 
+ * @param x: Vector of design variables
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
 int MMA::DualSolve(Eigen::VectorXd &x)
 {
   int ierr = 0;
@@ -355,15 +375,13 @@ int MMA::DualSolve(Eigen::VectorXd &x)
   xl3   = xl1.cwiseProduct(xl2);
   ierr = DualGrad(ux1, xl1, y, z, Grad); if (ierr!=0) {return ierr;}
 
-  while (epsi > epsimin)
-  {
+  while (epsi > epsimin) {
     epsvec.setConstant(epsi);
 
     DualResidual(Grad, eta, lambda, epsvec);
 
     int ittt = 0;
-    while (residumax > 0.9*epsi && ittt < 100)
-    {
+    while (residumax > 0.9*epsi && ittt < 100) {
       ittt++;
 
       ierr = DualHess(ux2, xl2, ux3, xl3, x, Hess); if (ierr!=0) {return ierr;}
@@ -395,11 +413,19 @@ int MMA::DualSolve(Eigen::VectorXd &x)
   return ierr;
 }
 
-/*************************************************************************/
-/**                    Residual of dual subproblem                      **/
-/*************************************************************************/
+/********************************************************************
+ * Residual of dual subproblem
+ * 
+ * @param Grad: Gradient of the dual subproblem
+ * @param eta:
+ * @param lambda:
+ * @param epsvec:
+ * 
+ * @return void
+ * 
+ *******************************************************************/
 void MMA::DualResidual(Eigen::VectorXd &Grad, Eigen::VectorXd &eta,
-                        Eigen::VectorXd &lambda, Eigen::VectorXd &epsvec)
+                       Eigen::VectorXd &lambda, Eigen::VectorXd &epsvec)
 {
   residual.resize(2*m);
   residual.segment(0,m) = Grad + eta;
@@ -410,9 +436,17 @@ void MMA::DualResidual(Eigen::VectorXd &Grad, Eigen::VectorXd &eta,
   return;
 }
 
-/*************************************************************************/
-/**       Get primal variables in terms of dual variable (lambda)       **/
-/*************************************************************************/
+/********************************************************************
+ * Get primal variables in terms of dual variable (lambda)
+ * 
+ * @param x: design variables
+ * @param y:
+ * @param z:
+ * @param lambda: Lagrange multipliers
+ * 
+ * @return void
+ * 
+ *******************************************************************/
 void MMA::XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z, Eigen::VectorXd &lambda)
 {
   Eigen::VectorXd plamrt = plam.cwiseSqrt();
@@ -425,31 +459,50 @@ void MMA::XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z, Eigen::Vec
   for (int i = 0; i < m; i++)
     y(i) = std::max(y(i), 0.0);
 
-  z = 10*std::max( (lambda.dot(a)-a0)/b0, 0.0);
+  z = 10*std::max((lambda.dot(a)-a0)/b0, 0.0);
 
   return;
 }
 
-/*************************************************************************/
-/**                  Gradient of the dual subproblem                    **/
-/*************************************************************************/
+/********************************************************************
+ * Gradient of the dual subproblem
+ * 
+ * @param ux1: upp - design variables
+ * @param xl1: design variables - low
+ * @param y:
+ * @param z:
+ * @param Grad: Gradient of the dual subproblem
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
 int MMA::DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
-                   Eigen::VectorXd &y, double &z, Eigen::VectorXd &grad)
+                   Eigen::VectorXd &y, double &z, Eigen::VectorXd &Grad)
 {
   int ierr = 0;
   /// fi(x(lambda))+b
   for (int i = 0; i < m; i++)
-    grad(i) = (P.col(i).cwiseQuotient(ux1) + Q.col(i).cwiseQuotient(xl1)).sum();
-  ierr = MPI_Allreduce(MPI_IN_PLACE, grad.data(), m, MPI_DOUBLE, MPI_SUM, Comm);
+    Grad(i) = (P.col(i).cwiseQuotient(ux1) + Q.col(i).cwiseQuotient(xl1)).sum();
+  ierr = MPI_Allreduce(MPI_IN_PLACE, Grad.data(), m, MPI_DOUBLE, MPI_SUM, Comm);
   /// -b-a*z(lambda)-y(lambda)
-  grad -= b + a*z + y;
+  Grad -= b + a*z + y;
 
   return ierr;
 }
 
-/*************************************************************************/
-/**                    Hessian of the dual subproblem                   **/
-/*************************************************************************/
+/********************************************************************
+ * Hessian of the dual subproblem
+ * 
+ * @param ux2: (upp - design variables)^2
+ * @param xl2: (design variables - low)^2
+ * @param ux3: (upp - design variables)^3
+ * @param xl3: (design variables - low)^3
+ * @param x: Design variables
+ * @param Hess: Hessian of the dual subproblem
+ * 
+ * @return ierr: ErrorCode
+ * 
+ *******************************************************************/
 int MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
                    Eigen::VectorXd &ux3, Eigen::VectorXd &xl3,
                    Eigen::VectorXd &x,   Eigen::MatrixXd &Hess)
@@ -478,9 +531,20 @@ int MMA::DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
   return ierr;
 }
 
-/*************************************************************************/
-/**                  Get step direction for dual solver                 **/
-/*************************************************************************/
+/********************************************************************
+ * Get step direction for dual solver
+ * 
+ * @param Hess: Hessian of the dual subproblem
+ * @param Grad: Gradient of the dual subproblem
+ * @param lambda: Lagrange multipliers
+ * @param eta:
+ * @param dellam: Step direction for lambda
+ * @param deleta: Step direction for eta
+ * @param epsvec:
+ * 
+ * @return void
+ * 
+ *******************************************************************/
 void MMA::SearchDir(Eigen::MatrixXd &Hess, Eigen::VectorXd &Grad,
                     Eigen::VectorXd &lambda, Eigen::VectorXd &eta,
                     Eigen::VectorXd &dellam, Eigen::VectorXd &deleta,
@@ -496,22 +560,28 @@ void MMA::SearchDir(Eigen::MatrixXd &Hess, Eigen::VectorXd &Grad,
   return;
 }
 
-/*************************************************************************/
-/**                    Set step size for dual solver                    **/
-/*************************************************************************/
+/********************************************************************
+ * Set step size for the dual solver
+ * 
+ * @param lambda: Lagrange multipliers
+ * @param eta:
+ * @param dellam: Step direction for lambda
+ * @param deleta: Step direction for eta
+ * 
+ * @return Theta: Step size
+ * 
+ *******************************************************************/
 double MMA::SearchDis(Eigen::VectorXd &lambda, Eigen::VectorXd &eta,
                       Eigen::VectorXd &dellam, Eigen::VectorXd &deleta)
 {
   double Theta = 1.0;
   Eigen::VectorXd Ratio = -0.99*lambda.cwiseQuotient(dellam);
-  for (int i = 0; i < m; i ++)
-  {
+  for (int i = 0; i < m; i ++) {
     if (Ratio(i) >= 0)
       Theta = std::min(Theta, Ratio(i));
   }
   Ratio = -0.99*eta.cwiseQuotient(deleta);
-  for (int i = 0; i < m; i ++)
-  {
+  for (int i = 0; i < m; i ++) {
     if (Ratio(i) >= 0)
       Theta = std::min(Theta, Ratio(i));
   }
@@ -519,9 +589,14 @@ double MMA::SearchDis(Eigen::VectorXd &lambda, Eigen::VectorXd &eta,
   return Theta;
 }
 
-/*************************************************************************/
-/**            Solve the subproblem with a Primal-Dual method           **/
-/*************************************************************************/
+/********************************************************************
+ * Solve the subproblem with a primal-dual method
+ * 
+ * @param x: Design variables
+ * 
+ * @return void
+ * 
+ *******************************************************************/
 void MMA::primaldual_subsolve(Eigen::VectorXd &x)
 {
   ///Primal-Dual Solver for MMA subproblem
@@ -537,8 +612,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
   Eigen::VectorXd xsi = (x-alfa).cwiseInverse();
   Eigen::VectorXd eta = (beta-x).cwiseInverse();
   Eigen::VectorXd mu(m);
-  for(uint i = 0; i < nactive; i++)
-  {
+  for(uint i = 0; i < nactive; i++) {
     xsi(i) = std::max(xsi(i),1.0);
     eta(i) = std::max(eta(i),1.0);
   }
@@ -548,8 +622,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
   Eigen::VectorXd s = Eigen::VectorXd::Ones(m);
   int itera = 0;
 
-  while (epsi > epsimin)
-  {
+  while (epsi > epsimin) {
     epsvecn.setConstant(epsi);
     epsvecm.setConstant(epsi);
     Eigen::VectorXd ux1 = *p_upp-x;
@@ -593,8 +666,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
     residunorm = residual.norm();
     residumax = residual.cwiseAbs().maxCoeff();
     int ittt = 0;
-    while (residumax > 0.9*epsi && ittt < 200)
-    {
+    while (residumax > 0.9*epsi && ittt < 200) {
       ittt++;
       itera++;
       ux1 = *p_upp-x;
@@ -627,8 +699,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
       Eigen::VectorXd diaglamyi = diaglam + diagyinv;
       Eigen::VectorXd dlam, dx;
       double dz;
-      if (m < nactive)
-      {
+      if (m < nactive) {
         Eigen::VectorXd blam = dellam + dely.cwiseQuotient(diagy) -
                                GG*(delx.cwiseQuotient(diagx));
         Eigen::VectorXd bb(blam.rows() + 1);
@@ -646,8 +717,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
         dz = solut(m);
         dx = -delx.cwiseQuotient(diagx) - (GG.transpose()*dlam).cwiseQuotient(diagx);
       }
-      else
-      {
+      else {
         Eigen::VectorXd diaglamyiinv = diaglamyi.cwiseInverse();
         Eigen::VectorXd dellamyi = dellam + dely.cwiseQuotient(diagy);
         diag1 = diagx.asDiagonal();
@@ -724,8 +794,7 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
 
       int itto = 0;
       double resinew = 2*residunorm;
-      while (resinew > residunorm && itto < 50)
-      {
+      while (resinew > residunorm && itto < 50) {
         itto++;
         x   = xold   + steg*dx;
         y   = yold   + steg*dy;
@@ -791,10 +860,17 @@ void MMA::primaldual_subsolve(Eigen::VectorXd &x)
   return;
 }
 
-/*************************************************************************/
-/**                 KKT check for Primal-Dual method                    **/
-/*************************************************************************/
-void MMA::primaldual_kktcheck( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx )
+/********************************************************************
+ * KKT check for primal-dual method
+ * 
+ * @param dfdx: Objective gradient (size nx1)
+ * @param g: Constraint values (size mx1)
+ * @param dgdx: Constraint gradients (size nxm)
+ * 
+ * @return void
+ * 
+ *******************************************************************/
+void MMA::primaldual_kktcheck(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
   Eigen::VectorXd rex = dfdx + dgdx.transpose()*lamma - xsimma + etamma;
   Eigen::VectorXd rey = c + d.cwiseProduct(ymma) - mumma - lamma;

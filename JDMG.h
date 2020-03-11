@@ -24,7 +24,8 @@ public:
   PetscErrorCode Set_Verbose(PetscInt verbose);
   // Get hierarchy from existing PCMG object
   PetscErrorCode PCMG_Extract(PC pcmg, bool isB=true, bool isA=false);
-  PetscErrorCode Set_Hierarchy(std::vector<Mat> P, const std::vector<MPI_Comm> MG_comms = std::vector<MPI_Comm>());
+  PetscErrorCode Set_Hierarchy(std::vector<Mat> P,
+    const std::vector<MPI_Comm> MG_comms = std::vector<MPI_Comm>());
   // Set which multigrid cycle to use
   void Set_Cycle(MG_Cycle_Type cycle) {this->cycle = cycle;}
   // Settings for the preconditioner
@@ -96,7 +97,10 @@ private:
   // Coarse solver in multigrid
   PetscErrorCode Coarse_Solve();
   // Output information
-  PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "JDMG found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
+  PetscErrorCode Print_Result() {
+    return PetscFPrintf(comm, output, "JDMG found %i of a requested %i eigenvalues "
+                        "after %i iterations\n\n", nev_conv, nev_req, it);
+  }
 };
 
 #endif // JDMG_H_INCLUDED

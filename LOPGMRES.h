@@ -36,11 +36,15 @@ private:
   // Cleanup after compute step
   PetscErrorCode Compute_Clean();
   // Multigrid solver
-  PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm, PetscScalar &Au_norm);
+  PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm,
+                                       PetscScalar &Au_norm);
   // Update the search space with the correction equation
   PetscErrorCode Update_Search(Vec x, Vec residual, PetscReal rnorm);
   // Output information
-  PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "LOPGMRES found %i of a requested %i eigenvalues after %i iterations \n\n", nev_conv, nev_req, it);}
+  PetscErrorCode Print_Result() {
+    return PetscFPrintf(comm, output, "LOPGMRES found %i of a requested %i "
+                        "eigenvalues after %i iterations \n\n", nev_conv, nev_req, it);
+  }
 
 };
 

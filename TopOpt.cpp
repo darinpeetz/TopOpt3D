@@ -5,9 +5,12 @@
 
 using namespace std;
 
-/*****************************************************************/
-/**           Initialization done by each constructor           **/
-/*****************************************************************/
+/********************************************************************
+ * Initialization done by each constructor
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Initialize()
 {
   PetscErrorCode ierr = 0;
@@ -27,9 +30,12 @@ PetscErrorCode TopOpt::Initialize()
   return ierr;
 }
 
-/*****************************************************************/
-/**                     Set up the loggers                      **/
-/*****************************************************************/
+/********************************************************************
+ * Set up the loggers
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::PrepLog()
 {
   PetscErrorCode ierr = 0;
@@ -39,9 +45,12 @@ PetscErrorCode TopOpt::PrepLog()
   return ierr;
 }
 
-/*****************************************************************/
-/**                Clear out the data structures                **/
-/*****************************************************************/
+/********************************************************************
+ * Clear out the data structures
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Clear()
 { 
   PetscErrorCode ierr = 0;
@@ -74,15 +83,17 @@ PetscErrorCode TopOpt::Clear()
   return ierr;
 }
 
-/*****************************************************************/
-/**                Print out the mesh information               **/
-/*****************************************************************/
+/********************************************************************
+ * Print out the mesh information
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::MeshOut()
 {
   PetscErrorCode ierr = 0;
   ofstream file;
-  if (this->myid == 0)
-  {
+  if (this->myid == 0) {
     file.open("Element_Distribution.bin", ios::binary);
     file.write((char*)this->elmdist.data(), this->elmdist.size()*sizeof(PetscInt));
     file.close();
@@ -121,8 +132,7 @@ PetscErrorCode TopOpt::MeshOut()
   ierr = MPI_File_seek(fh, this->elmdist(myid) * this->element.cols() *
                        sizeof(PetscInt), MPI_SEEK_SET); CHKERRQ(ierr);
   global_int.resize(this->nLocElem, this->element.cols());
-  for (int el = 0; el < this->nLocElem; el++)
-  {
+  for (int el = 0; el < this->nLocElem; el++) {
     for (int nd = 0; nd < this->element.cols(); nd++)
       global_int(el,nd) = this->gNode(this->element(el,nd)); 
   }
@@ -324,8 +334,7 @@ PetscErrorCode TopOpt::MeshOut()
 
   // Writing projecting matrices
   ArrayXPI lcol(this->nprocs);
-  for (unsigned int i = 0; i < this->PR.size(); i++)
-  {
+  for (unsigned int i = 0; i < this->PR.size(); i++) {
     stringstream level; level << i;
     string filename = "P" + level.str() + ".bin";
     ierr = PetscViewerBinaryOpen(this->comm, filename.c_str(), FILE_MODE_WRITE, &view); CHKERRQ(ierr);
@@ -333,8 +342,7 @@ PetscErrorCode TopOpt::MeshOut()
     ierr = PetscViewerDestroy(&view); CHKERRQ(ierr);
     ierr = MatGetLocalSize(this->PR[i], NULL, lcol.data()+this->myid); CHKERRQ(ierr);
     MPI_Allgather(MPI_IN_PLACE, 1, MPI_PETSCINT, lcol.data(), 1, MPI_PETSCINT, this->comm);
-    if (this->myid == 0)
-    {
+    if (this->myid == 0) {
       filename += ".split";
       file.open(filename.c_str(), ios::binary);
       file.write((char*)lcol.data(), lcol.size()*sizeof(PetscInt));
@@ -345,17 +353,24 @@ PetscErrorCode TopOpt::MeshOut()
   return 0;
 }
 
-/*****************************************************************/
-/**              Print out result of a single step              **/
-/*****************************************************************/
-PetscErrorCode TopOpt::StepOut ( const double &f,
-                    const Eigen::VectorXd &cons, int it, long nactive )
+/********************************************************************
+ * Print out result of a single step
+ * 
+ * @param f: Objective value
+ * @param cons: Constraint values
+ * @param it: Iteration number
+ * @param nactive: Number of active elements (not currently used)
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::StepOut(const double &f, const Eigen::VectorXd &cons,
+                               int it, long nactive)
 {
   PetscErrorCode ierr = 0;
 
   // Print out values at every step if desired
-  if ((print_every - ++last_print) == 0)
-  {
+  if ((print_every - ++last_print) == 0) {
     char name_suffix[30];
     sprintf(name_suffix, "_pen%1.4g_it%i", penal, it);
     ierr = PrintVals(name_suffix); CHKERRQ(ierr);
@@ -368,15 +383,13 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
   ierr = PetscFPrintf(comm, output, "Iteration number: %u\n", it); CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Objective: %1.6g\n", f); CHKERRQ(ierr);
   ierr = PetscFPrintf(comm, output, "Constraints:\n"); CHKERRQ(ierr);
-  for (short i = 0; i < cons.size(); i++)
-  {
+  for (short i = 0; i < cons.size(); i++) {
     ierr = PetscFPrintf(comm, output, "\t%1.12g\t", cons(i)); CHKERRQ(ierr);
   }
 
   // Print out value of each called function
   ierr = PetscFPrintf(comm, output, "\nAll function values:\n"); CHKERRQ(ierr);
-  for (unsigned int i = 0; i < function_list.size(); i++)
-  {
+  for (unsigned int i = 0; i < function_list.size(); i++) {
     ierr = PetscFPrintf(comm, output, "\t%12s: %1.8g\n",
                         Function_Base::name[function_list[i]->func_type],
                         function_list[i]->Get_Value()); CHKERRQ(ierr);
@@ -386,10 +399,15 @@ PetscErrorCode TopOpt::StepOut ( const double &f,
   return ierr;
 }
 
-/*****************************************************************/
-/**        Print out result of a penalization increment         **/
-/*****************************************************************/
-PetscErrorCode TopOpt::ResultOut ( int it )
+/********************************************************************
+ * Print out result of a penalization increment
+ * 
+ * @param it: Iteration number
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::ResultOut(int it)
 {
   PetscErrorCode ierr = 0;
 
@@ -411,10 +429,15 @@ PetscErrorCode TopOpt::ResultOut ( int it )
   return ierr;
 }
 
-/*****************************************************************/
-/**         The actual printing of optimization state           **/
-/*****************************************************************/
-PetscErrorCode TopOpt::PrintVals ( char *name_suffix )
+/********************************************************************
+ * The actual printing of the optimization state
+ * 
+ * @param name_suffix: Characters to append to the output file names
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::PrintVals(char *name_suffix)
 {
   PetscErrorCode ierr = 0;
   char filename[30];
@@ -450,8 +473,7 @@ PetscErrorCode TopOpt::PrintVals ( char *name_suffix )
   ierr = VecView(this->E, output); CHKERRQ(ierr);
   ierr = PetscViewerDestroy(&output); CHKERRQ(ierr);
 
-  for (int i = 0; i < this->bucklingShape.cols(); i++)
-  {
+  for (int i = 0; i < this->bucklingShape.cols(); i++) {
     sprintf(filename,"phiB%s_mode%i.bin", name_suffix, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,
@@ -464,8 +486,7 @@ PetscErrorCode TopOpt::PrintVals ( char *name_suffix )
     ierr = VecDestroy(&phi); CHKERRQ(ierr);
   }
 
-  for (int i = 0; i < this->dynamicShape.cols(); i++)
-  {
+  for (int i = 0; i < this->dynamicShape.cols(); i++) {
     sprintf(filename,"phiD_%s_mode%i.bin", name_suffix, i);
     Vec phi;
     ierr = VecCreateMPIWithArray(this->comm, 1, this->numDims*this->nLocNode,

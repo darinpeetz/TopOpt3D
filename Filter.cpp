@@ -16,11 +16,12 @@ using namespace std;
  * @param Filter: The Mat object to be used as the filter matrix
  * 
  * @return ierr: PetscErrorCode
+ * 
  *******************************************************************/
-PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
-                                   double *dx, double R, ArrayXPI Nel,
-                                   ArrayXPI &I, ArrayXPI &J,
-                                   ArrayXPS &K, PetscScalar nonzeros )
+PetscErrorCode TopOpt::RecFilter(PetscInt *first, PetscInt *last,
+                                  PetscScalar *dx, PetscScalar R,
+                                  ArrayXPI Nel, ArrayXPI &I, ArrayXPI &J,
+                                  ArrayXPS &K, PetscScalar nonzeros)
 {
   PetscErrorCode ierr = 0;
 
@@ -28,8 +29,7 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
   // the element at the center
   short N[3] = {0, 0, 0};
   short nNbrhd = 1;
-  for (short i = 0; i < numDims; i++)
-  {
+  for (short i = 0; i < numDims; i++) {
     N[i] = R/dx[i];
     nNbrhd *= 2*N[i]+1;
   }
@@ -40,14 +40,11 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
   Eigen::Array<bool, -1, 1> nbrhd((2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1));
   // Element number template for adding elements to array
   ArrayXPI elemTemplate((2*N[0]+1)*(2*N[1]+1)*(2*N[2]+1));
-  for (int k = -N[2]; k < N[2]+1; k++)
-  {
-    for (int j = -N[1]; j < N[1]+1; j++)
-    {
-      for (int i = -N[0]; i < N[0]+1; i++)
-      {
-        int ind = i+N[0] + (j+N[1])*(2*N[0]+1) + (k+N[2])*(2*N[0]+1)*(2*N[1]+1);
-        dist[ind] = sqrt( pow(i*dx[0],2) + pow(j*dx[1],2) + pow(k*dx[2],2) );
+  for (PetscInt k = -N[2]; k < N[2]+1; k++) {
+    for (PetscInt j = -N[1]; j < N[1]+1; j++) {
+      for (PetscInt i = -N[0]; i < N[0]+1; i++) {
+        PetscInt ind = i+N[0] + (j+N[1])*(2*N[0]+1) + (k+N[2])*(2*N[0]+1)*(2*N[1]+1);
+        dist[ind] = sqrt(pow(i*dx[0],2) + pow(j*dx[1],2) + pow(k*dx[2],2));
         nbrhd[ind] = dist[ind] < R;
         elemTemplate[ind] = i + j*Nel(0) + k*Nel(0)*Nel(1);
       }
@@ -55,32 +52,25 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
   }
 
   // Arrays of connected elements and their distances
-  int filterInd = 0;
+  PetscInt filterInd = 0;
   I.resize(nLocElem*nNbrhd);
   J.resize(nLocElem*nNbrhd);
   K.resize(nLocElem*nNbrhd);
   // First three loops are over local elements
-  for (int elk = first[2]; elk < last[2]; elk++)
-  {
-    for (int elj = first[1]; elj < last[1]; elj++)
-    {
-      for (int eli = first[0]; eli < last[0]; eli++)
-      {
-        int el = eli + elj*Nel(0) + elk*Nel(0)*Nel(1);
+  for (PetscInt elk = first[2]; elk < last[2]; elk++) {
+    for (PetscInt elj = first[1]; elj < last[1]; elj++) {
+      for (PetscInt eli = first[0]; eli < last[0]; eli++) {
+        PetscInt el = eli + elj*Nel(0) + elk*Nel(0)*Nel(1);
         // Next three loops are over neighborhood elements
-        for (int k = -N[2]; k < N[2]+1; k++)
-        {
-          for (int j = -N[1]; j < N[1]+1; j++)
-          {
-            for (int i = -N[0]; i < N[0]+1; i++)
-            {
+        for (PetscInt k = -N[2]; k < N[2]+1; k++) {
+          for (PetscInt j = -N[1]; j < N[1]+1; j++) {
+            for (PetscInt i = -N[0]; i < N[0]+1; i++) {
               // Connected element number in neighborhood
-              int ind = i+N[0] + (j+N[1])*(2*N[0]+1) + (k+N[2])*(2*N[0]+1)*(2*N[1]+1);
+              PetscInt ind = i+N[0] + (j+N[1])*(2*N[0]+1) + (k+N[2])*(2*N[0]+1)*(2*N[1]+1);
               // If element is within radius and in the same row/column
               bool valid = (nbrhd[ind]) && (i+eli>=0) && (i+eli<Nel(0)) &&
                   (j+elj>=0) && (j+elj<Nel(1)) && (k+elk>=0) && (k+elk<Nel(2));
-              if (valid)
-              {
+              if (valid) {
                 // Add that element to list
                 I(filterInd) = el;
                 J(filterInd) = elemTemplate[ind]+el;
@@ -93,7 +83,6 @@ PetscErrorCode TopOpt::RecFilter ( PetscInt *first, PetscInt *last,
             }
           }
         }
-
       }
     }
   }
@@ -119,15 +108,12 @@ PetscErrorCode TopOpt::Assemble_Filter(Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
   // Set preallocation
   ArrayXPI onDiag = ArrayXPI::Zero(this->nLocElem);
   ArrayXPI offDiag = ArrayXPI::Zero(this->nLocElem);
-  for (int el = 0; el < I.size(); el++)
-  {
+  for (PetscInt el = 0; el < I.size(); el++) {
     if (J(el) >= this->elmdist(this->myid) &&
-        J(el) < this->elmdist(this->myid+1) )
-    {
+        J(el) < this->elmdist(this->myid+1)) {
       onDiag(I(el)-this->elmdist(this->myid))++;
     }
-    else
-    {
+    else {
       offDiag(I(el)-this->elmdist(this->myid))++;
     }
   }
@@ -137,8 +123,7 @@ PetscErrorCode TopOpt::Assemble_Filter(Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
                                  offDiag.data(), 0, 0); CHKERRQ(ierr);
 
   // Insert values into matrix
-  for (int el = 0; el < I.size(); el++)
-  {
+  for (PetscInt el = 0; el < I.size(); el++) {
     ierr = MatSetValue(Matrix, I(el), J(el), K(el), ADD_VALUES); CHKERRQ(ierr);
   }
 
@@ -149,8 +134,7 @@ PetscErrorCode TopOpt::Assemble_Filter(Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
   ierr = MatAssemblyEnd(Matrix, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
 
   // Scale Rows
-  if (scale)
-  {
+  if (scale) {
     Vec rowSum, Ones;
     ierr = VecCreateMPI(comm, nLocElem, nElem, &rowSum); CHKERRQ(ierr);
     ierr = VecDuplicate(rowSum, &Ones); CHKERRQ(ierr);

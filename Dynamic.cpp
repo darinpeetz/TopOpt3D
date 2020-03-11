@@ -9,20 +9,27 @@
 
 using namespace std;
 
-PetscErrorCode Frequency::Function( TopOpt *topOpt )
+/********************************************************************
+ * Compute principal frequencies and their sensitivities
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode Frequency::Function(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
   short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
 
-  if (topOpt->verbose >= 3)
-  {
-    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Performing dynamic analysis\n"); CHKERRQ(ierr);
+  if (topOpt->verbose >= 3) {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, 
+                        "Performing dynamic analysis\n"); CHKERRQ(ierr);
   }
 
   /// Assemble Mass matrix and get sensitivity information
-  if (dMdy.size() == 0)
-  {
-    dMdy.resize( topOpt->nLocElem*(long)pow(DE,2) );
+  if (M == NULL) {
+    dMdy.resize(topOpt->nLocElem*(long)pow(DE,2));
     // Initialize M
     ierr = MatCreate(topOpt->comm, &M); CHKERRQ(ierr);
     ierr = MatSetSizes(M, topOpt->numDims*topOpt->nLocNode, topOpt->numDims*topOpt->nLocNode,
@@ -31,10 +38,11 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
     ierr = MatSetFromOptions(M); CHKERRQ(ierr);
     ArrayXPI onDiag = ArrayXPI::Ones(topOpt->nLocNode);
     ArrayXPI offDiag = ArrayXPI::Zero(topOpt->nLocNode);
-    ierr = MatXAIJSetPreallocation(M, topOpt->numDims, onDiag.data(), offDiag.data(), 0, 0); CHKERRQ(ierr);
+    ierr = MatXAIJSetPreallocation(M, topOpt->numDims, onDiag.data(), offDiag.data(), 0, 0);
+           CHKERRQ(ierr);
   }  
 
-  ierr = DiagMassFnc( topOpt ); CHKERRQ(ierr);
+  ierr = DiagMassFnc(topOpt); CHKERRQ(ierr);
   /// Remove fixed and spring dof from M (and K if necessary)
   ierr = MatZeroRowsColumns(M, topOpt->fixedDof.size(),
              topOpt->fixedDof.data(), 1e-8, NULL, NULL); CHKERRQ(ierr);
@@ -69,14 +77,13 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
 
   // Get the results
   PetscInt nev_conv = lopgmres.Get_nev_conv();
-  if (nev_conv == 0)
-  {
+  if (nev_conv == 0) {
     char name_suffix[30];
     sprintf(name_suffix, "_eigen_failure");
     ierr = topOpt->PrintVals(name_suffix); CHKERRQ(ierr);
     SETERRQ(topOpt->comm, PETSC_ERR_CONV_FAILED, "Eigensolver found 0 eigenvalues\n");
   }
-  VectorXPS lambda(nev_conv);
+  ArrayXPS lambda(nev_conv);
   lopgmres.Get_Eigenvalues(lambda.data());
 
   // Aggregate eigenvalues
@@ -92,8 +99,7 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   lopgmres.Get_Eigenvectors(&phi);
   topOpt->dynamicShape.resize(topOpt->dynamicShape.rows(), nev_conv);
   ierr = VecDuplicate(topOpt->U, &phi_copy); CHKERRQ(ierr);
-  for (int i = 0; i < nev_conv; i++)
-  {
+  for (int i = 0; i < nev_conv; i++) {
     ierr = VecPlaceArray(phi_copy, topOpt->dynamicShape.data() +
             i*topOpt->dynamicShape.rows()); CHKERRQ(ierr);
     ierr = VecCopy(phi[i], phi_copy);
@@ -105,22 +111,20 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
 
   /// Dot product of eigenvectors expanded to triplet form
   /// to match unassembled stiffness matrices
-  MatrixXPS phim( (DE*DE)*topOpt->nLocElem, nev_conv );
-  for (long el = 0; el < topOpt->nLocElem; el++)
-  {
+  MatrixXPS phim((DE*DE)*topOpt->nLocElem, nev_conv);
+  for (long el = 0; el < topOpt->nLocElem; el++) {
     ArrayXPI eDof(DE);
-    for (int i = 0; i < NE; i++)
-    {
-    for (int j = 0; j < DN; j++)
-      eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
+    for (int i = 0; i < NE; i++) {
+      for (int j = 0; j < DN; j++)
+        eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
     }
 
-    for (int i = 0; i < DE; i++){
-    for (int j = 0; j < DE; j++){
-      phim.row( (DE*DE)*el + DE*i + j) =
-      topOpt->dynamicShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
-              topOpt->dynamicShape.block(eDof(i),0,1,nev_conv));
-    }
+    for (int i = 0; i < DE; i++) {
+      for (int j = 0; j < DE; j++) {
+        phim.row((DE*DE)*el + DE*i + j) =
+        topOpt->dynamicShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
+                topOpt->dynamicShape.block(eDof(i),0,1,nev_conv));
+      }
     }
   }
 
@@ -129,30 +133,27 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   ierr = VecGetArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
   Eigen::Map< const Eigen::VectorXd > dEdz(p_dEdz, topOpt->nLocElem);
   MatrixXPS dKdy;
-  if (topOpt->regular)
-  {
+  if (topOpt->regular) {
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
     dKdy = Eigen::kroneckerProduct(dEdz, ke);
   }
-  else
-  {
+  else {
     /// TODO: COMBINE THIS AND PREVIOUS LOOP FOR EFFICIENCY
     PetscInt ind = 0;
     for (unsigned int el = 0; el < topOpt->ke.size(); el++)
-    ind += topOpt->ke[el].size();
+      ind += topOpt->ke[el].size();
     dKdy.resize(ind, 1);
     ind = 0;
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    for (unsigned int el = 0; el < topOpt->ke.size(); el++)
-    {
-    new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
-    dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
+    for (unsigned int el = 0; el < topOpt->ke.size(); el++) {
+      new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
+      dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
     }
   }
   ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
 
   /// Construct sensitivity
-  VectorXPS df = VectorXPS::Zero(dKdy.rows();
+  VectorXPS df = VectorXPS::Zero(dKdy.rows());
   for (short j = 0; j < nvals-1; j++)
     df += phim.col(j).cwiseProduct(dMdy-lambda[j]*dKdy) *
           std::pow((PetscScalar)lambda(j), p-1);
@@ -172,10 +173,15 @@ PetscErrorCode Frequency::Function( TopOpt *topOpt )
   return 0;
 }
 
-/********************************************************************/
-/**                Creates the diagonal mass matrix                **/
-/********************************************************************/
-PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
+/********************************************************************
+ * Creates a diagonal mass matrix
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode Frequency::DiagMassFnc(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
 
@@ -185,7 +191,7 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
   // Make sure M is zeroed out
   ierr = MatZeroEntries(M); CHKERRQ(ierr);
 
-  // Track construction of Ks, dKs
+  // Track construction of M, dM
   long dMmarker = 0;
 
   // Get pointers to Petsc vectors
@@ -193,38 +199,33 @@ PetscErrorCode Frequency::DiagMassFnc( TopOpt *topOpt )
   ierr = VecGetArrayRead(topOpt->V, &p_V); CHKERRQ(ierr);
   ierr = VecGetArrayRead(topOpt->dVdrho, &p_dVdrho); CHKERRQ(ierr);
 
-  MatrixPS mMat = 1.0/pow(2,topOpt->numDims)/topOpt->numDims*
+  MatrixXPS mMat = 1.0/pow(2,topOpt->numDims)/topOpt->numDims*
       topOpt->elemSize(0)*topOpt->density*MatrixXPS::Identity(DE, DE);
   Eigen::Map< VectorXPS > mVec(mMat.data(), mMat.size());
-  MatrixPS nodeMat(topOpt->numDims, topOpt->numDims);
+  MatrixXPS nodeMat(topOpt->numDims, topOpt->numDims);
   /// Loop over elements
-  for (long el = 0; el < topOpt->element.rows(); el++)
-  {
-    if (!topOpt->regular)
-    {
-    mMat.setIdentity();
-    mMat *= 1.0/pow(2,topOpt->numDims)/topOpt->numDims *
-      topOpt->density * topOpt->elemSize(0);
+  for (long el = 0; el < topOpt->element.rows(); el++) {
+    if (!topOpt->regular) {
+      mMat.setIdentity();
+      mMat *= 1.0/pow(2,topOpt->numDims)/topOpt->numDims *
+        topOpt->density * topOpt->elemSize(0);
     }
 
     /// Fill in the sensitivity dMdy
-    if (el < topOpt->nLocElem)
-    {
-    dMdy.segment(dMmarker, mVec.size()) = p_dVdrho[el] * mVec;
-    dMmarker += mVec.size();
+    if (el < topOpt->nLocElem) {
+      dMdy.segment(dMmarker, mVec.size()) = p_dVdrho[el] * mVec;
+      dMmarker += mVec.size();
     }
 
     /// Loop over indices to fill in M
-    for (int n = 0; n < NE; n++) // Looping over rows
-    {
-    PetscInt node = topOpt->element(el,n);
-    if (node < topOpt->nLocNode) // If node is local to this process
-    {
-      nodeMat = p_V[el]*mMat.block(n*topOpt->numDims, n*topOpt->numDims,
-        topOpt->numDims, topOpt->numDims);
-      PetscInt row = topOpt->gNode(node);
-      ierr = MatSetValuesBlocked(M, 1, &row, 1, &row, nodeMat.data(), ADD_VALUES); CHKERRQ(ierr);
-    }
+    for (int n = 0; n < NE; n++) { // Looping over rows
+      PetscInt node = topOpt->element(el,n);
+      if (node < topOpt->nLocNode) { // If node is local to this process
+        nodeMat = p_V[el]*mMat.block(n*topOpt->numDims, n*topOpt->numDims,
+          topOpt->numDims, topOpt->numDims);
+        PetscInt row = topOpt->gNode(node);
+        ierr = MatSetValuesBlocked(M, 1, &row, 1, &row, nodeMat.data(), ADD_VALUES); CHKERRQ(ierr);
+      }
     }
   }
 

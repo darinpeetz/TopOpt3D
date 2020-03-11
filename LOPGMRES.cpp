@@ -17,9 +17,12 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 //TODO: Investigate the whether eigensolver in Eigen is sufficient or if solvers
 // in BLAS/LAPACK are necessary for performance (for subspace problem)
 
-/******************************************************************************/
-/**                             Main constructor                             **/
-/******************************************************************************/
+/********************************************************************
+ * Main constructor
+ * 
+ * @param comm: MPI communicator for the object
+ * 
+ *******************************************************************/
 LOPGMRES::LOPGMRES(MPI_Comm comm)
 {
   this->comm = comm; Set_ID();
@@ -28,28 +31,38 @@ LOPGMRES::LOPGMRES(MPI_Comm comm)
   file_opened = 1;
 }
 
-/******************************************************************************/
-/**                              Main destructor                             **/
-/******************************************************************************/
+/********************************************************************
+ * Main destructor
+ * 
+ *******************************************************************/
 LOPGMRES::~LOPGMRES()
 {
   PetscErrorCode ierr = PCDestroy(&this->pc); CHKERRV(ierr);
 }
 
-/******************************************************************************/
-/**                       How much information to print                      **/
-/******************************************************************************/
+/********************************************************************
+ * How much information to print
+ * 
+ * @param verbose: The higher the number, the more to print
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
-  PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose", &this->verbose, NULL);
+  PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_Verbose",
+                                           &this->verbose, NULL);
   CHKERRQ(ierr);
   return 0;
 }
 
-/******************************************************************************/
-/**        Preps for computing the eigenmodes of the specified system        **/
-/******************************************************************************/
+/********************************************************************
+ * Preps for computing the eigenmodes of the specified system
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Compute_Init()
 {
   PetscErrorCode ierr = 0;
@@ -77,9 +90,9 @@ PetscErrorCode LOPGMRES::Compute_Init()
   ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_jmin", &jmin, NULL); CHKERRQ(ierr);
   ierr = PetscOptionsGetInt(NULL, NULL, "-LOPGMRES_jmax", &jmax, NULL); CHKERRQ(ierr);
   if (jmin < 0)
-    jmin = std::min( std::max(2*nev_req, 10), std::min(n/2,10));
+    jmin = std::min(std::max(2*nev_req, 10), std::min(n/2,10));
   if (jmax < 0)
-    jmax = std::min( std::max(4*nev_req, 25), std::min(n , 50));
+    jmax = std::min(std::max(4*nev_req, 25), std::min(n , 50));
 
   // Preallocate search space, work space, and eigenvectors
   ierr = VecDuplicateVecs(Q[0][0], jmax, &V); CHKERRQ(ierr);
@@ -89,9 +102,14 @@ PetscErrorCode LOPGMRES::Compute_Init()
   return 0;
 }
 
-/******************************************************************************/
-/**                    Fill out the initial search space                     **/
-/******************************************************************************/
+/********************************************************************
+ * Initialize the search space
+ * 
+ * @param j: Number of vectors to initialize
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Initialize_V(PetscInt &j)
 {
   PetscErrorCode ierr = 0;
@@ -101,7 +119,7 @@ PetscErrorCode LOPGMRES::Initialize_V(PetscInt &j)
 
   PetscBool start;
   ierr = PetscOptionsHasName(NULL, NULL, "-LOPGMRES_Static_Start", &start); CHKERRQ(ierr);
-  if (start){
+  if (start) {
     PetscInt first;
     PetscScalar *p_vec;
     ierr = MatGetOwnershipRange(A[0], &first, NULL); CHKERRQ(ierr);
@@ -115,7 +133,7 @@ PetscErrorCode LOPGMRES::Initialize_V(PetscInt &j)
     }
     j = jmin;
   }
-  else{  
+  else {  
     PetscRandom random;
     ierr = PetscRandomCreate(comm, &random); CHKERRQ(ierr);
     for (int ii = 0; ii < jmin; ii++) {
@@ -131,9 +149,16 @@ PetscErrorCode LOPGMRES::Initialize_V(PetscInt &j)
   return 0;
 }
 
-/******************************************************************************/
-/**                    Update parts of the preconditioner                    **/
-/******************************************************************************/
+/********************************************************************
+ * Update all parts of the preconditioner after eigenvalue update
+ * 
+ * @param residual: The current residual vector
+ * @param rnorm: Residual norm
+ * @param Au_norm: Norm of A*Q
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Update_Preconditioner(Vec residual,
                          PetscScalar &rnorm, PetscScalar &Au_norm)
 {
@@ -145,9 +170,16 @@ PetscErrorCode LOPGMRES::Update_Preconditioner(Vec residual,
   return 0;
 }
 
-/******************************************************************************/
-/**                          Update search space                             **/
-/******************************************************************************/
+/********************************************************************
+ * Update the search space
+ * 
+ * @param x: Vector to add to the search space
+ * @param residual: The current residual vector
+ * @param rnorm: Residual norm
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Update_Search(Vec x, Vec residual, PetscReal rnorm)
 {
   PetscErrorCode ierr = 0;
@@ -160,9 +192,12 @@ PetscErrorCode LOPGMRES::Update_Search(Vec x, Vec residual, PetscReal rnorm)
   return ierr;
 }
 
-/******************************************************************************/
-/**                      Clean up after compute phase                        **/
-/******************************************************************************/
+/********************************************************************
+ * Clean up after the compute phase
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode LOPGMRES::Compute_Clean()
 {
   PetscErrorCode ierr = 0;
@@ -171,10 +206,11 @@ PetscErrorCode LOPGMRES::Compute_Clean()
 
   // Extract and sort converged eigenpairs from Q and lambda
   lambda.conservativeResize(nev_conv);
-  MatrixPS empty(0,0);
+  MatrixXPS empty(0,0);
   Eigen::ArrayXi order = Sorteig(empty, lambda);
   if (nev_conv > 0) {
-    ierr = VecDuplicateVecs(Q[0][0], nev_conv, &phi); CHKERRQ(ierr); }
+    ierr = VecDuplicateVecs(Q[0][0], nev_conv, &phi); CHKERRQ(ierr);
+  }
   for (int ii = 0; ii < nev_conv; ii++)
   {
     ierr = VecCopy(Q[0][order(ii)], phi[ii]); CHKERRQ(ierr);

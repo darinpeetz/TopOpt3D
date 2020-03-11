@@ -2,7 +2,7 @@
 #include "EigenInverse.h"
 #include <fstream>
 
-extern "C"{
+extern "C" {
   void dsytrd_(char *UPLO, int *N, double *A, int *LDA, double *D, double *E,
               double *TAU, double *WORK, int *LWORK, int *INFO);
   void dorgtr_(char *UPLO, int *N, double *A, int *LDA,
@@ -13,10 +13,13 @@ extern "C"{
               const double *X, int *INCX, double *BETA, double *Y, int *INCY);
 }
 
-/*****************************************************/
-/**        Set a shell PC to use eigenvalue         **/
-/**        decomposition on coarse operator         **/
-/*****************************************************/
+/********************************************************************
+ * Set a shell PC to use eigenvalue decomposition on coarse operator
+ * 
+ * @param pc: preconditioner instance
+ * 
+ * @return ierr: PetscErrorCode
+ *******************************************************************/
 PetscErrorCode CreateEigenShell(PC pc)
 {
   PetscErrorCode ierr = 0;
@@ -33,9 +36,13 @@ PetscErrorCode CreateEigenShell(PC pc)
   return ierr;
 }
 
-/*****************************************************/
-/** Set up the shell pc (perform eigendecomposition)**/
-/*****************************************************/
+/********************************************************************
+ * Setup the shell preconditioner (perform the eigendecomposition)
+ * 
+ * @param pc: preconditioner instance
+ * 
+ * @return ierr: PetscErrorCode
+ *******************************************************************/
 PetscErrorCode EigenShellSetUp(PC pc)
 {
   PetscErrorCode ierr = 0;
@@ -114,9 +121,15 @@ PetscErrorCode EigenShellSetUp(PC pc)
   return ierr;
 }
 
-/*****************************************************/
-/**   Apply the inverse of the eigendecomposition   **/
-/*****************************************************/
+/********************************************************************
+ * Apply the inverse of the eigendecomposition
+ * 
+ * @param pc: preconditioner instance
+ * @param x: vector to apply preconditioner to
+ * @param y: vector that will store the result of applying pc to x
+ * 
+ * @return ierr: PetscErrorCode
+ *******************************************************************/
 PetscErrorCode EigenShellApply(PC pc, Vec x, Vec y)
 {
   PetscErrorCode ierr = 0;
@@ -150,17 +163,20 @@ PetscErrorCode EigenShellApply(PC pc, Vec x, Vec y)
   return ierr;
 }
 
-/*****************************************************/
-/**   Apply the inverse of the eigendecomposition   **/
-/*****************************************************/
+/********************************************************************
+ * ADestroy the inverse eigendecomposition preconditioner
+ * 
+ * @param pc: preconditioner instance
+ * 
+ * @return ierr: PetscErrorCode
+ *******************************************************************/
 PetscErrorCode EigenShellDestroy(PC pc)
 {
   PetscErrorCode ierr = 0;
 
   EigenShellPC *eigenPC;
   ierr = PCShellGetContext(pc, (void**)&eigenPC); CHKERRQ(ierr);
-  if (eigenPC->SetUp)
-  {
+  if (eigenPC->SetUp) {
     delete[] eigenPC->Q;
     delete[] eigenPC->lam;
   }

@@ -7,7 +7,7 @@ typedef struct {
 } EigenShellPC;
 
 // Routines to create, use, and destroy the shell preconditioner
-PetscErrorCode CreateEigenShell ( PC pc );
-PetscErrorCode EigenShellSetUp ( PC pc );
-PetscErrorCode EigenShellApply ( PC pc, Vec x, Vec y );
-PetscErrorCode EigenShellDestroy ( PC pc );
+PetscErrorCode CreateEigenShell(PC pc);
+PetscErrorCode EigenShellSetUp(PC pc);
+PetscErrorCode EigenShellApply(PC pc, Vec x, Vec y);
+PetscErrorCode EigenShellDestroy(PC pc);

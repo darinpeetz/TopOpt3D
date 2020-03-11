@@ -23,13 +23,13 @@ typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
 #define MPI_PETSCSCALAR MPIU_SCALAR
 
-enum BCTYPE { SUPPORT, LOAD, MASS, SPRING, EIGEN, OTHER };
-enum MATINT { SIMP, SIMP_CUT, SIMP_LOGISTIC };
+enum BCTYPE {SUPPORT, LOAD, MASS, SPRING, EIGEN, OTHER};
+enum MATINT {SIMP, SIMP_CUT, SIMP_LOGISTIC};
 
 /// The master structure containing all information to be carried between iterations
 class TopOpt
 {
-  /// Class variables - Setting all to public for now, but may like to change this later
+/// Class variables
 public:
 
   //MPI communicator
@@ -73,9 +73,9 @@ public:
 
   /// FEM setup variables - only used for FEM initialization
   //Element characteristics, E0 in Pa
-  double Nu0, E0;
+  PetscScalar Nu0, E0;
   //Element density in kg/m
-  double density;
+  PetscScalar density;
   //Support node numbers
   ArrayXPI suppNode;
   //Boolean indicating if dof is fixed or not
@@ -87,28 +87,27 @@ public:
   //Spring Support node numbers
   ArrayXPI springNode;
   //Spring dof stiffnesses in Pa
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> springs;
+  Eigen::Array<PetscScalar, -1, -1, Eigen::RowMajor> springs;
   //Load nodes
   ArrayXPI loadNode;
   //Loads values in N
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> loads;
+  Eigen::Array<PetscScalar, -1, -1, Eigen::RowMajor> loads;
   //Lumped mass nodes
   ArrayXPI massNode;
   //mass values in kg
-  Eigen::Array<double, -1, -1, Eigen::RowMajor> masses;
+  Eigen::Array<PetscScalar, -1, -1, Eigen::RowMajor> masses;
 
   /// FEM solution variables - used in each FEM iteration
   //Constitutive Matrix
   MatrixXPS d;
   // Element Jacobian
-  double detJ;
+  PetscScalar detJ;
   //B and G matrices for assembling stiffness matrices
   MatrixXPS *B, *G, *GT;
   //Integration point weights
-  double *W;
-  //Indices of local k matrix for constructing global K matrix
-  std::vector<double> k;
+  PetscScalar *W;
   //Triplet information for assembling stiffness matrix
+  std::vector<PetscScalar> k;
   std::vector<PetscInt> i, j, e;
   //Vector of values for individual elements
   std::vector<MatrixXPS> ke;
@@ -211,7 +210,8 @@ public:
                  bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
-  PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity, std::string key);
+  PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity,
+                        std::string key);
   PetscErrorCode Def_BC();
   PetscErrorCode Set_BC(ArrayXPS center, ArrayXPS radius,
                         ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE);
@@ -219,79 +219,80 @@ public:
   // Basic methods
   void MPI_Set() {MPI_Comm_rank(comm, &myid); MPI_Comm_size(comm, &nprocs);}
   PetscErrorCode PrepLog();
-  void SetDimension(short numDims)
-    { this->numDims = numDims; int pow2 = pow(2,numDims);
-      B = new MatrixXPS[pow2]; G = new MatrixXPS[pow2];
-      GT = new MatrixXPS[pow2]; W = new double[pow2]; }
+  void SetDimension(short numDims) {
+    this->numDims = numDims; int pow2 = pow(2,numDims); B = new MatrixXPS[pow2];
+    G = new MatrixXPS[pow2]; GT = new MatrixXPS[pow2]; W = new PetscScalar[pow2];
+  }
   PetscErrorCode Clear();
 
   // Printing information
-  PetscErrorCode MeshOut ( );
-  PetscErrorCode MeshOut ( TopOpt *topOpt );
-  PetscErrorCode StepOut ( const double &f, const VectorXPS &cons,
-                           int it, long nactive );
-  PetscErrorCode ResultOut ( int it );
-  PetscErrorCode PrintVals ( char *name_suffix );
+  PetscErrorCode MeshOut();
+  PetscErrorCode MeshOut(TopOpt *topOpt);
+  PetscErrorCode StepOut(const PetscScalar &f, const VectorXPS &cons,
+                         int it, long nactive);
+  PetscErrorCode ResultOut(int it);
+  PetscErrorCode PrintVals(char *name_suffix);
 
   // Mesh Creation
-  PetscErrorCode RecFilter ( PetscInt *first, PetscInt *last, double *dx, double R,
-                             ArrayXPI Nel, ArrayXPI &I, ArrayXPI &J,
-                             ArrayXPS &K, PetscScalar nonzeros=0 );
-  PetscErrorCode Assemble_Filter( Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
-                                  ArrayXPS &K, bool scale );
-  PetscErrorCode LoadMesh ( VectorXPS &xIni );
-  PetscErrorCode CreateMesh ( VectorXPS dimensions, ArrayXPI Nel, double Rmin,
-                              double Rmax, bool Reorder_Mesh, 
-                              PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode Create_Interpolations ( PetscInt *first, PetscInt *last, ArrayXPI Nel,
-                                         ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                                         ArrayXPI *cList, PetscInt mg_levels );
-  PetscErrorCode Create_Interpolation ( ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
-                                        ArrayXPI &I, ArrayXPI &J, ArrayXPS &K );
-  PetscErrorCode Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                         ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size );
-  PetscErrorCode ApplyDomain ( Eigen::Array<bool, -1, 1> elemValidity, int padding,
-                               int nInterfaceNodes,
-                               ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
-                               ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
-                               ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                               ArrayXPI *cList, int &mg_levels );
-  idx_t ReorderParMetis ( bool Reorder_Mesh, 
-                          ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
-                          ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
-                          idx_t nparts = 0, idx_t ncommonnodes = 0,
-                          real_t *tpwgts = NULL, real_t *ubvec = NULL,
-                          idx_t *opts = NULL, idx_t ncon = 1, idx_t *elmwgt = NULL,
-                          idx_t wgtflag = 0, idx_t numflag = 0 );
+  PetscErrorCode RecFilter(PetscInt *first, PetscInt *last, PetscScalar *dx,
+                           PetscScalar R, ArrayXPI Nel, ArrayXPI &I,
+                           ArrayXPI &J, ArrayXPS &K, PetscScalar nonzeros=0);
+  PetscErrorCode Assemble_Filter(Mat &Matrix, ArrayXPI &I, ArrayXPI &J,
+                                 ArrayXPS &K, bool scale);
+  PetscErrorCode LoadMesh(VectorXPS &xIni);
+  PetscErrorCode CreateMesh(VectorXPS dimensions, ArrayXPI Nel, PetscScalar Rmin,
+                            PetscScalar Rmax, bool Reorder_Mesh, 
+                            PetscInt mg_levels, PetscInt min_size);
+  PetscErrorCode Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
+                                       ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                       ArrayXPI *cList, PetscInt mg_levels);
+  PetscErrorCode Create_Interpolation(ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
+                                      ArrayXPI &I, ArrayXPI &J, ArrayXPS &K);
+  PetscErrorCode Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                        ArrayXPI *cList, PetscInt mg_levels,
+                                        PetscInt min_size);
+  PetscErrorCode ApplyDomain(Eigen::Array<bool, -1, 1> elemValidity, int padding,
+                             int nInterfaceNodes, ArrayXPI &MinFI, ArrayXPI &MinFJ,
+                             ArrayXPS &MinFK, ArrayXPI &MaxFI, ArrayXPI &MaxFJ,
+                             ArrayXPS &MaxFK, ArrayXPI *I, ArrayXPI *J,
+                             ArrayXPS *K, ArrayXPI *cList, int &mg_levels);
+  idx_t ReorderParMetis(bool Reorder_Mesh, ArrayXPI &MinFI, ArrayXPI &MinFJ,
+                        ArrayXPS &MinFK, ArrayXPI &MaxFI, ArrayXPI &MaxFJ,
+                        ArrayXPS &MaxFK, idx_t nparts=0, idx_t ncommonnodes=0,
+                        real_t *tpwgts=NULL, real_t *ubvec=NULL,
+                        idx_t *opts=NULL, idx_t ncon=1, idx_t *elmwgt=NULL,
+                        idx_t wgtflag=0, idx_t numflag=0);
 
-  PetscErrorCode ElemDist ( Eigen::Array<idx_t, -1, 1> &partition,
-                            ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
-                            ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK );
-  PetscErrorCode GetElemNumbers ( PetscInt ghostStart, PetscInt ghostEnd,
-                                  ArrayXPI &newElemNumber, ArrayXPI &allElemNumber );
-  PetscErrorCode NodeDist ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                            ArrayXPI *cList, int mg_levels );
+  PetscErrorCode ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
+                          ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                          ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK);
+  PetscErrorCode GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
+                                ArrayXPI &newElemNumber, ArrayXPI &allElemNumber);
+  PetscErrorCode NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                          ArrayXPI *cList, int mg_levels);
   PetscErrorCode Expand_Elem();
   PetscErrorCode Expand_Node();
   PetscErrorCode Initialize_Vectors();
   PetscErrorCode Localize();
+  // Get centroids of the elements
+  MatrixXPS GetCentroids();
 
   // Finite Elements
-  PetscErrorCode FEInitialize ( );
-  PetscErrorCode FESolve ( );
-  PetscErrorCode FEAssemble ( );
-  PetscErrorCode MatIntFnc ( const VectorXPS &y );
-  PetscErrorCode IsolateRigid ( );
-  PetscErrorCode SetMatNullSpace ( );
+  PetscErrorCode FEInitialize();
+  PetscErrorCode FESolve();
+  PetscErrorCode FEAssemble();
+  PetscErrorCode MatIntFnc(const VectorXPS &y);
+  PetscErrorCode IsolateRigid();
+  PetscErrorCode SetMatNullSpace();
 
   // Apply filter for chain rule
-  PetscErrorCode Chain_Filter ( Vec dfdE, Vec dfdV );
+  PetscErrorCode Chain_Filter(Vec dfdE, Vec dfdV);
 
 private:
-  MatrixXPS LocalK ( PetscInt el );
-  PetscErrorCode Calc_Strain_Energy( ArrayXPS &energy );
-  Eigen::ArrayXXd GaussPoints( );
-  MatrixXPS dN(double *gaussPoint);
+  MatrixXPS LocalK(PetscInt el);
+  PetscErrorCode Calc_Strain_Energy(ArrayXPS &energy);
+  Eigen::ArrayXXd GaussPoints();
+  MatrixXPS dN(PetscScalar *gaussPoint);
   void AssignB(MatrixXPS &dNdx, MatrixXPS &B);
   void AssignG(MatrixXPS &dNdx, MatrixXPS &G, MatrixXPS &GT);
 

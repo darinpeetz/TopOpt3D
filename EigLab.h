@@ -18,9 +18,16 @@ template <class T> class xind
 
 namespace EigLab
 {
-/*************************************************************************************************/
+/********************************************************************
+ * Sort items in matrix/vector from largest to smallest
+ * 
+ * @param x: Matrix or vector to sort
+ * 
+ * @return ind: Order that items were sorted in
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA>
-  Eigen::ArrayXi gensort ( MatrixTypeA &x )
+  Eigen::ArrayXi gensort(MatrixTypeA &x)
   {
     typedef typename MatrixTypeA::Scalar Scalar;
 
@@ -28,10 +35,9 @@ namespace EigLab
     Eigen::ArrayXi ind(x.rows(),x.cols());
     std::vector< xind<Scalar> > sorter;
     for (long i = 0; i < x.rows(); i++)
-        sorter.push_back( xind<Scalar>(x(i, 0), i) );
+        sorter.push_back(xind<Scalar>(x(i, 0), i));
     std::stable_sort(sorter.begin(), sorter.end());
-    for (unsigned long j = 0; j < sorter.size(); j++)
-    {
+    for (unsigned long j = 0; j < sorter.size(); j++) {
       result(j) = x(sorter[j].ind);
       ind(j) = sorter[j].ind;
     }
@@ -39,9 +45,18 @@ namespace EigLab
 
     return ind;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * Sort along a specified dimension
+ * 
+ * @param x: Matrix or vector to sort
+ * @param dim: The dimension to sort along
+ * 
+ * @return ind: Order that items were sorted in
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA>
-  Eigen::ArrayXi sort ( MatrixTypeA &x, short dim )
+  Eigen::ArrayXi sort(MatrixTypeA &x, short dim)
   {
     typedef typename MatrixTypeA::Scalar Scalar;
 
@@ -49,19 +64,16 @@ namespace EigLab
     long m, n;
     m = x.rows();
     n = x.cols();
-    if (dim == 1) // sort rows
-    {
+    if (dim == 1) { // sort rows
       ind = Eigen::ArrayXi::LinSpaced(m, 0, m-1);
       Eigen::ArrayXi newind(m);
       MatrixTypeA result(m, n);
-      for (long i = n-1; i >= 0; i-- )
-      {
+      for (long i = n-1; i >= 0; i--) {
         std::vector< xind<Scalar> > sorter;
         for (long j = 0; j < m; j++)
-            sorter.push_back( xind<Scalar>(x(j,i), j) );
+            sorter.push_back(xind<Scalar>(x(j,i), j));
         std::stable_sort(sorter.begin(), sorter.end());
-        for (unsigned long j = 0; j < sorter.size(); j++)
-        {
+        for (unsigned long j = 0; j < sorter.size(); j++) {
           result.row(j) = x.row(sorter[j].ind);
           newind(j) = ind(sorter[j].ind);
         }
@@ -69,19 +81,16 @@ namespace EigLab
         ind = newind;
       }
     }
-    else if (dim == 2) // sort cols
-    {
+    else if (dim == 2) { // sort cols
       ind = Eigen::ArrayXi::LinSpaced(n, 0, n-1);
       Eigen::ArrayXi newind(n);
       MatrixTypeA result(m, n);
-      for (long i = m-1; i >= 0; i-- )
-      {
+      for (long i = m-1; i >= 0; i--) {
         std::vector< xind<Scalar> > sorter;
         for (long j = 0; j < n; j++)
-            sorter.push_back( xind<Scalar>(x(i,j), j) );
+            sorter.push_back(xind<Scalar>(x(i,j), j));
         std::stable_sort(sorter.begin(), sorter.end());
-        for (unsigned long j = 0; j < sorter.size(); j++)
-        {
+        for (unsigned long j = 0; j < sorter.size(); j++) {
           result.col(j) = x.col(sorter[j].ind);
           newind(j) = ind(sorter[j].ind);
         }
@@ -92,21 +101,29 @@ namespace EigLab
 
     return ind;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * Remove rows or columns specified by a list
+ * 
+ * @param matrix: The matrix or vector to remove elements rom
+ * @param indices: The list of rows or columns to KEEP
+ * @param dim: The dimension to remove elements along (1=row, 2=col)
+ * 
+ * @return void
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA, typename MatrixTypeB>
-  void IndRemove ( MatrixTypeA &matrix, MatrixTypeB &indices, const short dim )
+  void IndRemove(MatrixTypeA &matrix, MatrixTypeB &indices, const short dim)
   {
     //Keeps indicated indices
     std::sort(indices.data(), indices.data()+indices.size());
     long int nrows = matrix.rows(), ncols = matrix.cols();
-    if (dim == 1)
-    {
+    if (dim == 1) {
       nrows = indices.size();
       for (long int i = 0; i < indices.size(); i++)
           matrix.row(i) = matrix.row(indices(i));
     }
-    if (dim == 2)
-    {
+    if (dim == 2) {
       ncols = indices.size();
       for (long int i = 0; i < indices.size(); i++)
           matrix.col(i) = matrix.col(indices(i));
@@ -115,27 +132,33 @@ namespace EigLab
 
     return;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * Remove rows or columns specified by a boolean array
+ * 
+ * @param matrix: The matrix or vector to remove elements from
+ * @param indices: remove rows/cols where indices == 0
+ * @param dim: The dimension to remove elements along (1=row, 2=col)
+ * 
+ * @return void
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA, typename MatrixTypeB>
-  void BoolRemove ( MatrixTypeA &matrix, MatrixTypeB &indices, const short dim )
+  void BoolRemove(MatrixTypeA &matrix, MatrixTypeB &indices, const short dim)
   {
     //Keeps nonzero values
     long int index = 0;
     long int nrows = matrix.rows(), ncols = matrix.cols();
 
-    if (dim == 1)
-    {
-      for (long int i = 0; i < matrix.rows(); i++)
-      {
+    if (dim == 1) {
+      for (long int i = 0; i < matrix.rows(); i++) {
         if (indices(i) != 0)
           matrix.row(index++) = matrix.row(i);
       }
       nrows = index;
     }
-    if (dim == 2)
-    {
-      for (long int i = 0; i < matrix.cols(); i++)
-      {
+    if (dim == 2) {
+      for (long int i = 0; i < matrix.cols(); i++) {
         if (indices(i) != 0)
           matrix.col(index++) = matrix.col(i);
       }
@@ -145,41 +168,59 @@ namespace EigLab
 
     return;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * A more generic function to remove rows or columns
+ * 
+ * @param matrix: The matrix or vector to remove elements from
+ * @param indices: Indicator of rows or columns to KEEP
+ * @param dim: The dimension to remove elements along (1=row, 2=col)
+ * 
+ * @return void
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA, typename MatrixTypeB>
-  void RemoveSlices ( MatrixTypeA &matrix, MatrixTypeB &indices, const short dim )
+  void RemoveSlices(MatrixTypeA &matrix, MatrixTypeB &indices, const short dim)
   {
     if (matrix.size() == 0)
       return;
-    // Removes rows or columns from a matrix - operates with 0 base for row numbers, dim = 1 for rows, 2 for cols
-    if ( dim == 1 )  //Removing Rows
-    {
-      if (indices.rows() == matrix.rows())          //boolean remove, 1 keep, 0 remove
-        BoolRemove ( matrix, indices, dim );
-      else                                         //Keep indicated indices
-        IndRemove ( matrix, indices, dim );
+    // Removes rows or columns from a matrix - operates with 0 base for row
+    // numbers, dim = 1 for rows, 2 for cols
+    if (dim == 1) { // Removing Rows
+      if (indices.rows() == matrix.rows()) // boolean remove, 1 keep, 0 remove
+        BoolRemove(matrix, indices, dim);
+      else                                 // Keep indicated indices
+        IndRemove(matrix, indices, dim);
     }
-    else if ( dim == 2 ) //Removing Cols
-    {
-      if (indices.cols() == matrix.cols())         //boolean remove, 1 keep, 0 remove
-        BoolRemove ( matrix, indices, dim );
-      else                                         //Keep indicated indices
-        IndRemove ( matrix, indices, dim );
+    else if (dim == 2) { //Removing Cols
+      if (indices.cols() == matrix.cols()) // boolean remove, 1 keep, 0 remove
+        BoolRemove(matrix, indices, dim);
+      else                                 // Keep indicated indices
+        IndRemove(matrix, indices, dim);
     }
     else
-      std::cout << "Bad dimension given to RemoveRows, dimension must be 1 for rows or 2 for columns\n";
+      std::cout << "Bad dimension given to RemoveRows, dimension must be "
+                   "1 for rows or 2 for columns\n";
     return;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * Remove duplicates
+ * 
+ * @param matrix: The matrix or vector to remove duplicates from
+ * @param dim: The dimension to remove elements along (1=row, 2=col)
+ * 
+ * @return void
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA>
-  void Unique ( MatrixTypeA &matrix, short dim )
+  void Unique(MatrixTypeA &matrix, short dim)
   {
     if (matrix.size() == 0)
       return;
 
     sort(matrix, dim);
-    if (dim == 1)
-    {
+    if (dim == 1) {
       MatrixTypeA matA = matrix.block(0, 0, matrix.rows()-1, matrix.cols());
       MatrixTypeA matB = matrix.block(1, 0, matrix.rows()-1, matrix.cols());
       Eigen::Matrix<bool, -1, 1> check = (matA.cwiseNotEqual(matB)).rowwise().any();
@@ -189,8 +230,7 @@ namespace EigLab
       check.reverseInPlace();
       RemoveSlices(matrix, check, dim);
     }
-    else if (dim == 2)
-    {
+    else if (dim == 2) {
       MatrixTypeA matA = matrix.block(0, 0, matrix.rows(), matrix.cols()-1);
       MatrixTypeA matB = matrix.block(0, 1, matrix.rows(), matrix.cols()-1);
       Eigen::Matrix<bool, -1, 1> check = (matA.cwiseNotEqual(matB)).colwise().any();
@@ -201,20 +241,29 @@ namespace EigLab
       RemoveSlices(matrix, check, dim);
     }
     else
-      std::cout << "Bad dimension given to Unique, dimension must be 1 for rows or 2 for columns\n";
+      std::cout << "Bad dimension given to Unique, dimension must be 1 for "
+                   "rows or 2 for columns\n";
     return;
   }
-/*************************************************************************************************/
+
+/********************************************************************
+ * Find value in a matrix or vector
+ * 
+ * @param matrix: The matrix or vector to find a value in
+ * @param value: The value to find
+ * 
+ * @return indices: The (row, column) locations where the value is
+ * 
+ *******************************************************************/
   template <typename MatrixTypeA, typename T>
-  Eigen::ArrayXXi find ( MatrixTypeA &matrix, const T value)
+  Eigen::ArrayXXi find(MatrixTypeA &matrix, const T value)
   {
     typedef typename MatrixTypeA::Scalar Scalar;
     Scalar *start = matrix.data();
     Scalar *finish = matrix.data()+matrix.size();
     Scalar *point;
     std::vector<long> colind;
-    while ( start <= finish )
-    {
+    while (start <= finish) {
       point = std::find(start, finish, value);
       colind.push_back(point-matrix.data());
       start = point+1;
@@ -222,14 +271,12 @@ namespace EigLab
     colind.pop_back();
     Eigen::ArrayXXi indices(colind.size(), 2);
     long n = matrix.rows();
-    for (unsigned int i = 0; i < colind.size(); i++)
-    {
+    for (unsigned int i = 0; i < colind.size(); i++) {
       indices(i,0) = colind[i] % n;
       indices(i,1) = (colind[i]-indices(i,0))/n;
     }
     return indices;
   }
-/*************************************************************************************************/
 }
 
 #endif // EIGLAB_H_INCLUDED

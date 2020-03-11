@@ -6,17 +6,26 @@
 #include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
 
-PetscErrorCode Stability::Function( TopOpt *topOpt )
+/********************************************************************
+ * Compute principal buckling modes and their sensitivities
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode Stability::Function(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
   short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
+  PC pc; PetscInt levels;
 
   /// Assemble stress stiffness matrix and get sensitivity information
-  if (dKsdy.size() == 0) {
+  if (Ks == NULL) {
     dKsdy.resize(topOpt->nLocElem*(long)std::pow(DE,2));
     ierr = MatDuplicate(topOpt->K, MAT_SHARE_NONZERO_PATTERN, &Ks); CHKERRQ(ierr);
   }
-  ierr = StressFnc( topOpt ); CHKERRQ(ierr);
+  ierr = StressFnc(topOpt); CHKERRQ(ierr);
 
   /// Remove fixed dof from Ks
   ierr = MatZeroRowsColumns(Ks, topOpt->fixedDof.size(), topOpt->fixedDof.data(),
@@ -96,7 +105,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
 
   /// Dot product of eigenvectors expanded to triplet form
   /// to match unassembled stiffness matrices
-  MatrixXPS phim( (DE*DE)*topOpt->gElem.rows(), nev_conv );
+  MatrixXPS phim((DE*DE)*topOpt->gElem.rows(), nev_conv);
   for (long el = 0; el < topOpt->gElem.rows(); el++) {
     ArrayXPI eDof(DE);
     for (int i = 0; i < NE; i++) {
@@ -106,7 +115,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
 
     for (int i = 0; i < DE; i++) {
       for (int j = 0; j < DE; j++) {
-        phim.row( (DE*DE)*el + DE*i + j) =
+        phim.row((DE*DE)*el + DE*i + j) =
           topOpt->bucklingShape.block(eDof(j),0,1,nev_conv).cwiseProduct(
                   topOpt->bucklingShape.block(eDof(i),0,1,nev_conv));
       }
@@ -120,7 +129,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     this->dKsdu.setZero(dDE , DE);
     // Loop over dof of a single element
     for (int dof = 0; dof < DE; dof++) {
-    Eigen::Map< MatrixXPS > dksdu( this->dKsdu.data() + dDE*dof, DE, DE );
+    Eigen::Map< MatrixXPS > dksdu(this->dKsdu.data() + dDE*dof, DE, DE);
     Eigen::VectorXd du = Eigen::VectorXd::Zero(DE);
     du(dof) = 1;
     // Loop through quadrature points
@@ -165,10 +174,10 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
 
   // Solving each adjoint problem
   for (short i = 0; i < nev_conv; i++) {
-    ierr = VecPlaceArray( dKsdU_vec, dKsdU.data() + i*dKsdU.rows() ); CHKERRQ(ierr);
-    ierr = VecPlaceArray( v_vec, v.data() + i*dKsdU.rows() ); CHKERRQ(ierr);
+    ierr = VecPlaceArray(dKsdU_vec, dKsdU.data() + i*dKsdU.rows()); CHKERRQ(ierr);
+    ierr = VecPlaceArray(v_vec, v.data() + i*dKsdU.rows()); CHKERRQ(ierr);
     ierr = VecSet(v_vec, 0.0); CHKERRQ(ierr);
-    ierr = KSPSolve( topOpt->KUF, dKsdU_vec, v_vec ); CHKERRQ(ierr);
+    ierr = KSPSolve(topOpt->KUF, dKsdU_vec, v_vec); CHKERRQ(ierr);
     PetscInt its;
     ierr = KSPGetIterationNumber(topOpt->KUF, &its); CHKERRQ(ierr);
     KSPConvergedReason reason;
@@ -184,14 +193,14 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
     }
     ierr = VecGhostUpdateBegin(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
     ierr = VecGhostUpdateEnd(v_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-    ierr = VecResetArray( dKsdU_vec ); CHKERRQ(ierr);
-    ierr = VecResetArray( v_vec ); CHKERRQ(ierr);
+    ierr = VecResetArray(dKsdU_vec); CHKERRQ(ierr);
+    ierr = VecResetArray(v_vec); CHKERRQ(ierr);
   }
-  ierr = VecDestroy( &dKsdU_vec ); CHKERRQ(ierr);
-  ierr = VecDestroy( &v_vec ); CHKERRQ(ierr);
+  ierr = VecDestroy(&dKsdU_vec); CHKERRQ(ierr);
+  ierr = VecDestroy(&v_vec); CHKERRQ(ierr);
 
-  MatrixXPS vm( (DE*DE)*topOpt->nLocElem, nev_conv );
-  Eigen::VectorXd Um( (DE*DE)*topOpt->nLocElem );
+  MatrixXPS vm((DE*DE)*topOpt->nLocElem, nev_conv);
+  Eigen::VectorXd Um((DE*DE)*topOpt->nLocElem);
   const PetscScalar *p_U;
   ierr = VecGetArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
   for (long el = 0; el < topOpt->nLocElem; el++) {
@@ -221,7 +230,7 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   else {
     PetscInt ind = 0;
     for (unsigned int el = 0; el < topOpt->ke.size(); el++)
-    ind += topOpt->ke[el].size();
+      ind += topOpt->ke[el].size();
     dKdy.resize(ind, 1);
     ind = 0;
     Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
@@ -254,7 +263,15 @@ PetscErrorCode Stability::Function( TopOpt *topOpt )
   return 0;
 }
 
-PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
+/********************************************************************
+ * Creates the stress stiffness matrix
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode Stability::StressFnc(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
   // Mesh characteristics
@@ -275,33 +292,28 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
   MatrixXPS ks = MatrixXPS::Zero(DE, DE);
   Eigen::Map< Eigen::VectorXd > ksVec(ks.data(), ks.size());
   /// Loop over elements
-  for (long el = 0; el < topOpt->element.rows(); el++)
-  {
+  for (long el = 0; el < topOpt->element.rows(); el++) {
     ks.setZero();
     Eigen::VectorXd u(DE);
 
     /// Get fem solution for this element
-    for (short n = 0; n < NE; n++)
-    {
-    for (short d = 0; d < DN; d++)
-    {
-      u(d + n*DN) = p_U[DN*topOpt->element(el, n) + d];
-    }
+    for (short n = 0; n < NE; n++) {
+      for (short d = 0; d < DN; d++) {
+        u(d + n*DN) = p_U[DN*topOpt->element(el, n) + d];
+      }
     }
 
     /// Loop over quadrature points
-    for (short qp = 0; qp < 4; qp++)
-    {
-    ks += topOpt->W[qp] * topOpt->GT[qp]
-      * sigtos(topOpt->d * topOpt->B[qp] * u)
-      * topOpt->G[qp] * topOpt->detJ;
+    for (short qp = 0; qp < 4; qp++) {
+      ks += topOpt->W[qp] * topOpt->GT[qp]
+        * sigtos(topOpt->d * topOpt->B[qp] * u)
+        * topOpt->G[qp] * topOpt->detJ;
     }
 
     /// Fill in dKsdy for local elements
-    if (el < topOpt->nLocElem)
-    {
-    dKsdy.segment(dksmarker, ksVec.size()) = -p_dEsdz[el]*ksVec;
-    dksmarker += ksVec.size();
+    if (el < topOpt->nLocElem) {
+      dKsdy.segment(dksmarker, ksVec.size()) = -p_dEsdz[el]*ksVec;
+      dksmarker += ksVec.size();
     }
 
     /// Loop over nodes to fill in KS
@@ -311,17 +323,14 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
     cols[nd] = topOpt->gNode(topOpt->element(el,nd));
     // Now construct
     ks *= -p_Es[el];
-    for (int nd = 0; nd < NE; nd++) // Looping over rows
-    {
-    PetscInt node = topOpt->element(el,nd);
-    if (node < topOpt->nLocNode) // If node is local to this process
-    {
-      ierr = MatSetValuesBlocked(Ks, 1, topOpt->gNode.data()+node,
-      NE, cols.data(), ks.data() + DE*DN*nd, ADD_VALUES);
-      CHKERRQ(ierr);
+    for (int nd = 0; nd < NE; nd++) { // Looping over rows
+      PetscInt node = topOpt->element(el,nd);
+      if (node < topOpt->nLocNode) { // If node is local to this process
+        ierr = MatSetValuesBlocked(Ks, 1, topOpt->gNode.data()+node,
+        NE, cols.data(), ks.data() + DE*DN*nd, ADD_VALUES);
+        CHKERRQ(ierr);
+      }
     }
-    }
-
   }
 
   ierr = MatAssemblyBegin(Ks, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
@@ -333,17 +342,22 @@ PetscErrorCode Stability::StressFnc( TopOpt *topOpt )
   return 0;
 }
 
+/********************************************************************
+ * Converts stress in vector form to matrix form
+ * 
+ * @param sigma: Stress vector
+ * 
+ * @return s: Stress matrix
+ * 
+ *******************************************************************/
 MatrixXPS Stability::sigtos(VectorXPS sigma)
 {
-  switch (sigma.size())
-  {
-    case 1: //1-D
-    {
+  switch (sigma.size()) {
+    case 1: { //1-D
       return sigma;
       break;
     }
-    case 3:
-    {
+    case 3: {
       MatrixXPS s = MatrixXPS::Zero(4 , 4);
       s(0,0) = sigma(0);
       s(1,1) = sigma(1);
@@ -353,8 +367,7 @@ MatrixXPS Stability::sigtos(VectorXPS sigma)
       return s;
       break;
     }
-    case 6:
-    {
+    case 6: {
       MatrixXPS s = MatrixXPS::Zero(9 , 9);
       // Normal stresses
       s(0,0) = sigma(0);

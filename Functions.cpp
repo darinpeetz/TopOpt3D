@@ -4,9 +4,17 @@
 using namespace std;
 const char *Function_Base::name[] = {"Compliance", "Volume", "Stability", "Frequency"};
 
-/******************************************************************************/
-/**                       Function_Base constructor                          **/
-/******************************************************************************/
+/********************************************************************
+ * Constructor for base optimization/compliance function
+ * 
+ * @param values: Objective weights or constraint values
+ * @param min_val: Minimum value for function (used in function normalization)
+ * @param max_val: Maximum value for function (used in function normalization)
+ * @param objective: True if function is an objective, False if it is a constraint
+ * @param calc_gradient: Indicate if we need the function gradient as well
+ * 
+ * @return void
+ *******************************************************************/
 Function_Base::Function_Base(std::vector<PetscScalar> &values, PetscScalar min_val,
                   PetscScalar max_val, PetscBool objective, PetscBool calc_gradient)
 {
@@ -20,42 +28,55 @@ Function_Base::Function_Base(std::vector<PetscScalar> &values, PetscScalar min_v
   this->calc_gradient = calc_gradient;
 }
 
-/******************************************************************************/
-/**                  Get value and gradient of a function                    **/
-/******************************************************************************/
+/********************************************************************
+ * Compute the value and sensitivities of the function
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode Function_Base::Compute(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
-  if (topOpt->verbose >= 2)
-  {
+  if (topOpt->verbose >= 2) {
     ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Calling %s function\n",
                         name[this->func_type]); CHKERRQ(ierr);
   }
   ierr = Function(topOpt); CHKERRQ(ierr);
 
   // Calculate combined function value and gradient
-  if (topOpt->verbose >= 3)
-  {
+  if (topOpt->verbose >= 3) {
     ierr = PetscFPrintf(topOpt->comm, topOpt->output,
                         "Tabulating results of %s function\n",
                          name[this->func_type]); CHKERRQ(ierr);
   }
-  value = 0; gradient.setZero();
-  for (PetscInt i = 0; i < weights.size(); i++)
-  {
-    value += (objective==PETSC_TRUE?weights(i):1)*(values(i)-min_val);
+  // value = 0; gradient.setZero();
+  // for (PetscInt i = 0; i < weights.size(); i++) {
+    PetscInt i = 0;
+    value = (objective==PETSC_TRUE?weights(i):1)*(values(i)-min_val);
     value -= (objective==PETSC_TRUE?0:weights(i));
-    gradient += (objective==PETSC_TRUE?weights(i):1)*gradients.col(i);
-  }
+    gradient = (objective==PETSC_TRUE?weights(i):1)*gradients.col(i);
+  // }
   value /= max_val-min_val;
   gradient /= max_val-min_val;
 
   return ierr;
 }
 
-/******************************************************************************/
-/**                 Assemble function values and gradients                   **/
-/******************************************************************************/
+
+/********************************************************************
+ * Call all the functions to get a total objective and all constraints
+ * 
+ * @param topOpt: The topology optimization object
+ * @param f: Objective value
+ * @param dfdx: Objective sensitivities
+ * @param g: Constraint values
+ * @param dgdx: Constraint sensitivities
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
                Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
 {
@@ -63,16 +84,13 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
 
   int constraint = 0;
   f = 0; dfdx.setZero(topOpt->nLocElem); dgdx.setZero(topOpt->nLocElem, dgdx.cols());
-  for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++)
-  {
+  for (unsigned int ii = 0; ii < topOpt->function_list.size(); ii++) {
     ierr = topOpt->function_list[ii]->Compute(topOpt); CHKERRQ(ierr);
-    if (topOpt->function_list[ii]->objective == PETSC_TRUE)
-    {
+    if (topOpt->function_list[ii]->objective == PETSC_TRUE) {
       f += topOpt->function_list[ii]->value;
       dfdx += topOpt->function_list[ii]->gradient;
     }
-    else
-    {
+    else {
       g(constraint) = topOpt->function_list[ii]->value;
       dgdx.col(constraint) = topOpt->function_list[ii]->gradient;
       constraint++;
@@ -80,8 +98,7 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
   }
 
   int ind = 0;
-  for (int ii = 0; ii < topOpt->nLocElem; ii++)
-  {
+  for (int ii = 0; ii < topOpt->nLocElem; ii++) {
     if (topOpt->active(ii)) {
       dfdx(ind) = dfdx(ii);
       dgdx.row(ind) = dgdx.row(ii);
@@ -94,9 +111,14 @@ PetscErrorCode Function_Base::Function_Call(TopOpt *topOpt, double &f,
   return ierr;
 }
  
-/******************************************************************************/
-/**                  Print out values at the end of a run                    **/
-/******************************************************************************/
+/********************************************************************
+ * Call all possible functions and print their values
+ * 
+ * @param topOpt: The topology optimization object
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode Function_Base::Normalization(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;

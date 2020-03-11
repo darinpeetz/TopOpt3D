@@ -14,7 +14,8 @@ enum FUNCTION_TYPE {COMPLIANCE, VOLUME, STABILITY, FREQUENCY};
 class Function_Base
 {
 public:
-  Function_Base(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient);
+  Function_Base(std::vector<PetscScalar> &values, PetscScalar min_val,
+                PetscScalar max_val, PetscBool objective, PetscBool calc_gradient);
   virtual ~Function_Base() {}
 
   // Compute weighted and normalized values
@@ -29,9 +30,12 @@ public:
   PetscBool calc_gradient;
 
   // Initialize gradient arrays
-  PetscErrorCode Initialize_Arrays(PetscInt nElem) {gradients.resize(nElem, nvals); gradient.resize(nElem); return 0;}
+  PetscErrorCode Initialize_Arrays(PetscInt nElem) {
+    gradients.resize(nElem, nvals); gradient.resize(nElem); return 0;
+  }
   // Assemble all function values and gradients
-  static PetscErrorCode Function_Call(TopOpt *topOpt, double &f, VectorXPS &g, VectorXPS &dgdx, MatrixXPS &dfdx);
+  static PetscErrorCode Function_Call(TopOpt *topOpt, double &f, VectorXPS &g,
+                                      VectorXPS &dgdx, MatrixXPS &dfdx);
   // Print all values at the end of a run if desired
   static PetscErrorCode Normalization(TopOpt *topOpt);
   // Names of functions
@@ -59,7 +63,11 @@ protected:
 class Compliance : public Function_Base
 {
 public:
-  Compliance(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {func_type = COMPLIANCE;}
+  Compliance(std::vector<PetscScalar> &values, PetscScalar min_val,
+             PetscScalar max_val, PetscBool objective,
+             PetscBool calc_gradient=PETSC_TRUE) : 
+             Function_Base(values, min_val, max_val, objective,
+                           calc_gradient) {func_type = COMPLIANCE;}
   ~Compliance() {}
 
 protected:
@@ -69,7 +77,11 @@ protected:
 class Volume : public Function_Base
 {
 public:
-  Volume(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {func_type = VOLUME;}
+  Volume(std::vector<PetscScalar> &values, PetscScalar min_val,
+         PetscScalar max_val, PetscBool objective,
+         PetscBool calc_gradient=PETSC_TRUE) :
+         Function_Base(values, min_val, max_val, objective,
+                       calc_gradient) {func_type = VOLUME;}
   ~Volume() {}
 
 protected:
@@ -79,7 +91,11 @@ protected:
 class Stability : public Function_Base
 {
 public:
-  Stability(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {dKsdy = VectorXPS::Zero(0); func_type = STABILITY;}
+  Stability(std::vector<PetscScalar> &values, PetscScalar min_val,
+            PetscScalar max_val, PetscBool objective,
+            PetscBool calc_gradient=PETSC_TRUE) :
+            Function_Base(values, min_val, max_val, objective,
+                          calc_gradient) {Ks = NULL; func_type = STABILITY;}
   ~Stability() {MatDestroy(&Ks);}
 
 protected:
@@ -100,7 +116,11 @@ protected:
 class Frequency : public Function_Base
 {
 public:
-  Frequency(std::vector<PetscScalar> &values, PetscScalar min_val, PetscScalar max_val, PetscBool objective, PetscBool calc_gradient=PETSC_TRUE) : Function_Base(values, min_val, max_val, objective, calc_gradient) {dMdy = VectorXPS::Zero(0); func_type = FREQUENCY;}
+  Frequency(std::vector<PetscScalar> &values, PetscScalar min_val,
+            PetscScalar max_val, PetscBool objective,
+            PetscBool calc_gradient=PETSC_TRUE) :
+            Function_Base(values, min_val, max_val, objective,
+                          calc_gradient) {M = NULL; func_type = FREQUENCY;}
   ~Frequency() {MatDestroy(&M);}
 
 protected:

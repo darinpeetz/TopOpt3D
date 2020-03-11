@@ -9,9 +9,9 @@
 typedef Eigen::Array<PetscInt, -1, -1> ArrayXXPI;
 typedef Eigen::Array<PetscInt, -1,  1> ArrayXPI;
 typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
-typedef Eigen::Matrix<double, -1, -1, Eigen::RowMajor> MatrixXdRM;
-typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixPS;
-typedef Eigen::Array<PetscScalar, -1, 1>  ArrayPS;
+typedef Eigen::Matrix<PetscScalar, -1, -1, Eigen::RowMajor> MatrixXdRM;
+typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
+typedef Eigen::Array<PetscScalar, -1, 1>  ArrayXPS;
 #define MPI_PETSCINT MPIU_INT
 
 extern PetscLogEvent EIG_Compute;
@@ -45,14 +45,16 @@ public:
   // Where to print the information
   PetscErrorCode Set_File(FILE *output); // For already opened files
   PetscErrorCode Open_File(const char filename[]); // For files to be opened within EigenPeetz
-  PetscErrorCode Close_File() {if (file_opened) {PetscErrorCode ierr = PetscFClose(comm, output); CHKERRQ(ierr);} return 0;}
+  PetscErrorCode Close_File() {if (file_opened) {
+    PetscErrorCode ierr = PetscFClose(comm, output); CHKERRQ(ierr); }
+    return 0; }
   // Set operators of eigensystem
   PetscErrorCode Set_Operators(Mat A, Mat B);
   // Setting target eigenvalues and number to find
-  void Set_Target(Tau tau, PetscInt nev, Nev_Type ntype);
-  void Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype);
-  void Set_Tol(double tol) {eps = tol;}
-  void Set_MaxIt(PetscInt maxit) {this->maxit = maxit;}
+  PetscErrorCode Set_Target(Tau tau, PetscInt nev, Nev_Type ntype);
+  PetscErrorCode Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype);
+  PetscErrorCode Set_Tol(PetscScalar tol);
+  PetscErrorCode Set_MaxIt(PetscInt maxit);
   PetscInt Get_It() {return it;}
   // Solver
   virtual PetscErrorCode Compute() = 0;
@@ -77,10 +79,10 @@ protected:
   std::vector<Mat> A, B;
   // Eigenvalues and EigenVectors
   Vec* phi;
-  ArrayPS lambda;
+  ArrayXPS lambda;
   // Workspace
   Vec *TempVecs;
-  ArrayPS TempScal;
+  ArrayXPS TempScal;
   // Problem size
   PetscInt n, nlocal;
   // Number of requested and converged eigenvalues
@@ -92,9 +94,9 @@ protected:
   // Target eigenvalues
   Tau tau;
   // Numeric Target if desired
-  double tau_num;
+  PetscScalar tau_num;
   // Convergence tolerance
-  double eps;
+  PetscScalar eps;
   // Maximum and total run iterations
   PetscInt maxit, it;
 
@@ -104,15 +106,19 @@ protected:
   // Check if all requested eigenvalues have been found
   bool Done();
   // Sort eigenvalues
-  Eigen::ArrayXi Sorteig(MatrixPS &W, ArrayPS &S);
+  Eigen::ArrayXi Sorteig(MatrixXPS &W, ArrayXPS &S);
   // Gram-Schmidt methods
   PetscErrorCode Icgsm(Vec* Q, Mat M, Vec u, PetscScalar &r, PetscInt k);
   PetscErrorCode Mgsm(Vec* Q, Vec* Qm, Vec u, PetscInt k);
   PetscErrorCode GS(Vec* Q, Vec Mu, Vec u, PetscInt k);
   // Output information
-  virtual PetscErrorCode Print_Status(PetscReal rnorm) {return PetscFPrintf(comm, output, "Iteration: %4i\tLambda Approx: %14.14g\tResidual: %4.4g\n", it, lambda(nev_conv), rnorm);}
-  virtual PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "Eigensolver found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
-
+  virtual PetscErrorCode Print_Status(PetscReal rnorm) {
+    return PetscFPrintf(comm, output, "Iteration: %4i\tLambda Approx: %14.14g\t"
+                        "Residual: %4.4g\n", it, lambda(nev_conv), rnorm);}
+  virtual PetscErrorCode Print_Result() {
+    return PetscFPrintf(comm, output, "Eigensolver found %i of a requested "
+                        "%i eigenvalues after %i iterations\n\n",
+                        nev_conv, nev_req, it);}
 };
 
 #endif // EigenPeetz_H_INCLUDED

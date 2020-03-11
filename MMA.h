@@ -15,47 +15,57 @@ class MMA
   public:
     // Constructors
     MMA() {miniter = 0; minchange = 0; iter = 0; Set_Defaults(); return;}
-    MMA( ulong nvar )
-          { Set_n(nvar); Initialize(); iter = 0; Set_Defaults(); return;}
-    void Set_Defaults() { epsimin = 1e-7; raa0 = 1e-5; mmamove = 0.5;
-                          albefa = 0.1; asyinit = 0.5; asyincr = 1.2;
-                          asydecr = 0.7; fresh_start = true;}
+    MMA(ulong nvar) {
+      Set_n(nvar); Initialize(); iter = 0; Set_Defaults(); return;
+    }
+    void Set_Defaults() {epsimin = 1e-7; raa0 = 1e-5; move = 0.5;
+                         albefa = 0.1; asyinit = 0.5; asyincr = 1.2;
+                         asydecr = 0.7; fresh_start = true;}
     // Preallocate arrays of size n
     void Initialize();
     // Set MPI communicator
-    void Set_Comm( MPI_Comm Mcomm ){ Comm = Mcomm; MPI_Comm_rank(Comm, &myid);
-                                     MPI_Comm_size(Comm, &nproc); return; }
+    void Set_Comm(MPI_Comm Mcomm){
+      Comm = Mcomm; MPI_Comm_rank(Comm, &myid); MPI_Comm_size(Comm, &nproc); return;
+    }
     // Set number of design variables
-    void Set_n( ulong nvar ) { nloc = nvar; MPI_Allreduce(&nloc, &n, 1,
-                               MPI_LONG, MPI_SUM, Comm); Initialize(); return; }
+    void Set_n(ulong nvar) {
+      nloc = nvar; MPI_Allreduce(&nloc, &n, 1, MPI_LONG, MPI_SUM, Comm);
+      Initialize();
+      return;
+    }
     // Set number of constraints
-    void Set_m( uint mval );
+    void Set_m(uint mval);
     // Set lower bound of design variables
-    void Set_Lower_Bound( Eigen::VectorXd XM ) { xmin = XM; }
+    void Set_Lower_Bound(Eigen::VectorXd XM) {xmin = XM;}
     // Set upper bound of design variables
-    void Set_Upper_Bound( Eigen::VectorXd XU ) { xmax = XU; }
+    void Set_Upper_Bound(Eigen::VectorXd XU) {xmax = XU;}
     // Set MMA subproblem constants
-    void Set_Constants( double a0val, double b0val, Eigen::VectorXd &aval,
-                        Eigen::VectorXd &cval, Eigen::VectorXd &dval )
-         { a0 = a0val; b0 = b0val; a = aval; c = cval; d = dval; }
+    void Set_Constants(double a0val, double b0val, Eigen::VectorXd &aval,
+                       Eigen::VectorXd &cval, Eigen::VectorXd &dval) {
+      a0 = a0val; b0 = b0val; a = aval; c = cval; d = dval;
+    }
     // Set KKT limit for convergence
-    void Set_KKT_Limit( double lim ) { kkttol = lim; }
+    void Set_KKT_Limit(double lim) {kkttol = lim;}
     // Set maximum and minimum number of iterations for convergence
-    void Set_Iter_Limit_Min( uint minimum ) { miniter = minimum; }
-    void Set_Iter_Limit_Max( uint maximum ) { maxiter = maximum; }
+    void Set_Iter_Limit_Min(uint minimum) {miniter = minimum;}
+    void Set_Iter_Limit_Max(uint maximum) {maxiter = maximum;}
     // Set minimum DV change for convergence
-    void Set_Change_Limit( double minimum ) { minchange = minimum; }
+    void Set_Change_Limit(double minimum) {minchange = minimum;}
     // Set maximum setp size
-    void Set_Step_Limit( double step ) { mmamove = step; }
+    void Set_Step_Limit(double step) {move = step;}
     // Set DV values (for initialization)
-    void Set_Values( Eigen::VectorXd xIni ) { xval = xIni; xold1 = xIni; xold2 = xIni; }
+    void Set_Values(Eigen::VectorXd xIni) {xval = xIni; xold1 = xIni; xold2 = xIni;}
     // Set DV values to active or passive
-    int Set_Active( std::vector<bool> &active ) { this->active = active;
-               nactive = std::count(active.begin(), active.end(), true); return 0;}
-    int Set_Active( Eigen::Array<bool, -1, 1> &active ) {
+    int Set_Active(std::vector<bool> &active) {
+      this->active = active;
+      nactive = std::count(active.begin(), active.end(), true);
+      return 0;
+    }
+    int Set_Active(Eigen::Array<bool, -1, 1> &active) {
       std::copy(active.data(), active.data()+active.size(), this->active.begin());
       nactive = std::count(this->active.begin(), this->active.end(), true);
       return 0;}
+
     // Set current iteration number
     void Set_It(uint it) {iter = it; return;}
     // Set a flag to check if asymptotes are valid or need to be set to defaults
@@ -70,24 +80,25 @@ class MMA
     uint            &Get_It()      {return iter;}
 
     // Checking convergence
-    bool Check(){ return (Check_Conv() || Check_It()); }
-    bool Check_Conv(){ return ((iter > miniter) && (Change<minchange)); }
+    bool Check() {return (Check_Conv() || Check_It());}
+    bool Check_Conv() {return ((iter > miniter) && (Change<minchange));}
     bool Check_It() {return ++iter>=maxiter;}
 
     // Update the design variables
-    int Update( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+    int Update(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx);
 
 
   private:
     // MMA solver
-    int MMAsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+    int MMAsub(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx);
     // OC solver
-    int OCsub( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+    int OCsub(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx);
     // Auxiliary functions for MMA subsolvers
     int  DualSolve(Eigen::VectorXd &x);
     void DualResidual(Eigen::VectorXd &hvec, Eigen::VectorXd &eta,
-                       Eigen::VectorXd &lambda, Eigen::VectorXd &epsvecm);
-    void XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z, Eigen::VectorXd &lambda);
+                      Eigen::VectorXd &lambda, Eigen::VectorXd &epsvecm);
+    void XYZofLam(Eigen::VectorXd &x, Eigen::VectorXd &y, double &z,
+                  Eigen::VectorXd &lambda);
     int  DualGrad(Eigen::VectorXd &ux1, Eigen::VectorXd &xl1,
                   Eigen::VectorXd &y, double &z, Eigen::VectorXd &grad);
     int  DualHess(Eigen::VectorXd &ux2, Eigen::VectorXd &xl2,
@@ -100,7 +111,8 @@ class MMA
     double SearchDis(Eigen::VectorXd &lambda, Eigen::VectorXd &eta,
                      Eigen::VectorXd &dellam, Eigen::VectorXd &deleta);
     void primaldual_subsolve(Eigen::VectorXd &x);
-    void primaldual_kktcheck( Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx );
+    void primaldual_kktcheck(Eigen::VectorXd &dfdx, Eigen::VectorXd &g,
+                             Eigen::MatrixXd &dgdx);
 
     /// MPI Variables
     MPI_Comm Comm;
@@ -125,10 +137,12 @@ class MMA
     double kkttol, minchange;
     /// Lower and Upper bound on x
     Eigen::VectorXd xmin, xmax;
+    /// Move limit
+    double move;
     /// MMA constants
     double a0, b0;
     Eigen::VectorXd a, b, c, d;
-    double epsimin, raa0, mmamove, albefa, asyinit, asyincr, asydecr;
+    double epsimin, raa0, albefa, asyinit, asyincr, asydecr;
     /// Asymptotes
     Eigen::VectorXd low, upp;
     /// Active parts of the asymptotes
@@ -146,8 +160,7 @@ class MMA
     Eigen::VectorXd residual;
     double residunorm, residumax;
     /// OC values if I ever get the OC update working right
-    double OCMove, OCeta, Change;
-
+    double OCeta, Change;
 };
 
 #endif // MMA_H_INCLUDED

@@ -21,9 +21,10 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
 //TODO: Investigate the whether eigensolver in Eigen is sufficient or if solvers
 // in BLAS/LAPACK are necessary for performance (for subspace problem)
 
-/******************************************************************************/
-/**                             Main constructor                             **/
-/******************************************************************************/
+/********************************************************************
+ * Main constructor
+ * 
+ *******************************************************************/
 PRINVIT::PRINVIT()
 {
   Qsize = nev_req;
@@ -31,16 +32,22 @@ PRINVIT::PRINVIT()
   PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &verbose, NULL);
 }
 
-/******************************************************************************/
-/**                              Main destructor                             **/
-/******************************************************************************/
+/********************************************************************
+ * Main constructor
+ * 
+ *******************************************************************/
 PRINVIT::~PRINVIT()
 {
 }
 
-/******************************************************************************/
-/**                       How much information to print                      **/
-/******************************************************************************/
+/********************************************************************
+ * Set how much information the subroutines print
+ * 
+ * @param verbose: The higher the number, the more is printed
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode PRINVIT::Set_Verbose(PetscInt verbose)
 {
   this->verbose = verbose;
@@ -49,9 +56,12 @@ PetscErrorCode PRINVIT::Set_Verbose(PetscInt verbose)
   return 0;
 }
 
-/******************************************************************************/
-/**             Computes the eigenmodes of the specified system              **/
-/******************************************************************************/
+/********************************************************************
+ * Computes the eigenmodes of the specified system
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode PRINVIT::Compute()
 {
   PetscErrorCode ierr = 0;
@@ -72,43 +82,39 @@ PetscErrorCode PRINVIT::Compute()
   ierr = MatMult(B[0], V[0], TempVecs[0]); CHKERRQ(ierr);
   ierr = VecDot(V[0], TempVecs[0], TempScal.data()); CHKERRQ(ierr);
   ierr = VecScale(V[0], 1.0/sqrt(TempScal(0))); CHKERRQ(ierr);
-  for (int ii = 1; ii < j; ii++)
-  {
+  for (int ii = 1; ii < j; ii++) {
     ierr = Icgsm(V, B[0], V[ii], TempScal(0), ii); CHKERRQ(ierr);
     ierr = VecScale(V[ii], 1.0/TempScal(0)); CHKERRQ(ierr);
   }
 
   // Construct initial search subspace
-  MatrixPS G = MatrixPS::Zero(jmax,jmax);
-  for (int ii = 0; ii < j; ii++)
-  {
+  MatrixXPS G = MatrixXPS::Zero(jmax,jmax);
+  for (int ii = 0; ii < j; ii++) {
     ierr = MatMult(A[0], V[ii], TempVecs[ii]); CHKERRQ(ierr);
     ierr = VecMDot(TempVecs[ii], j, V, G.data() + jmax*ii); CHKERRQ(ierr);
   }
 
   // Construct eigensolver context for that subspace
-  Eigen::SelfAdjointEigenSolver<MatrixPS> eps_sub(jmax);
+  Eigen::SelfAdjointEigenSolver<MatrixXPS> eps_sub(jmax);
   PetscScalar theta = 0; // Approximation of lambda
 
   // Things needed in the computation loop
   Vec residual;
   VecDuplicate(Q[0][0], &residual);
   PetscReal rnorm = 0, rnorm_old = 0, Au_norm = 0, orth_norm = 0;
-  MatrixPS W; ArrayPS S;
+  MatrixXPS W; ArrayXPS S;
   PetscInt base_it = maxit; PetscScalar base_eps = eps;
   ierr = PetscLogEventEnd(EIG_Initialize, 0, 0, 0, 0); CHKERRQ(ierr);
 
   // The actual computation loop
   it = 0;
-  while (it++ < maxit)
-  {
+  while (it++ < maxit) {
     eps_sub.compute(G.block(0,0,j,j));
     W = eps_sub.eigenvectors();
     S = eps_sub.eigenvalues();
     Sorteig(W, S);
 
-    while (true)
-    {
+    while (true) {
       ierr = PetscLogEventBegin(EIG_Prep, 0, 0, 0, 0); CHKERRQ(ierr);
       // Get new eigenvector approximation
       ierr = VecSet(Q[0][nev_conv], 0.0); CHKERRQ(ierr);
@@ -129,7 +135,9 @@ PetscErrorCode PRINVIT::Compute()
       }
 
       ierr = PetscLogEventEnd(EIG_Prep, 0, 0, 0, 0); CHKERRQ(ierr);
-      if ( ( (rnorm/abs(theta) >= eps) && (rnorm_old != rnorm) && (rnorm/Au_norm >= 1e-12) ) || (j <= 1) ) {
+      if (((rnorm/abs(theta) >= eps) && // Converged on residual norm
+          ((std::abs(theta - lambda(nev_conv))/theta > 1e-14) || (it/(nev_conv+1) < 10))) // stagnation
+           || (j <= 1)) {
         lambda(nev_conv) = theta;
         rnorm_old = rnorm;
         break;
@@ -151,25 +159,22 @@ PetscErrorCode PRINVIT::Compute()
       #if defined(PETSC_USE_DEBUG)
       MPI_Allreduce(MPI_IN_PLACE, W.data(), j*j, MPI_DOUBLE, MPI_MAX, comm);
       #endif
-      for (int ii = 1; ii < j; ii++)
-      {
+      for (int ii = 1; ii < j; ii++) {
         ierr = VecMAXPY(V[ii-1], j, W.data()+ii*j, TempVecs); CHKERRQ(ierr);
       }
 
       for (int ii = 0; ii < j-1; ii++)
         S(ii) = S(ii+1);
       G.block(0, 0, j-1, j-1) = S.segment(0,j-1).matrix().asDiagonal();
-      W = MatrixPS::Identity(j-1, j-1);
+      W = MatrixXPS::Identity(j-1, j-1);
       j--; nev_conv++;
 
       ierr = PetscLogEventEnd(EIG_Convergence, 0, 0, 0, 0); CHKERRQ(ierr);
-      if (Done())
-      {
+      if (Done()) {
         // Cleanup
         ierr = VecDestroy(&residual); CHKERRQ(ierr);
         ierr = Compute_Clean(); CHKERRQ(ierr);
-        if (this->verbose >= 1)
-        {
+        if (this->verbose >= 1) {
           ierr = Print_Result(); CHKERRQ(ierr);
         }
         ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
@@ -178,16 +183,13 @@ PetscErrorCode PRINVIT::Compute()
     }
 
     // Check for restart
-    if (j == jmax)
-    {
+    if (j == jmax) {
       j = jmin;
-      for (int ii = 0; ii < jmax; ii++)
-      {
+      for (int ii = 0; ii < jmax; ii++) {
         ierr = VecCopy(V[ii], TempVecs[ii]); CHKERRQ(ierr);
         ierr = VecSet(V[ii], 0.0); CHKERRQ(ierr);
       }
-      for (int ii = 0; ii < j; ii++)
-      {
+      for (int ii = 0; ii < j; ii++) {
         ierr = VecMAXPY(V[ii], jmax, W.data()+ii*jmax, TempVecs); CHKERRQ(ierr);
       }
       G.block(0, 0, j, j) = S.segment(0,j).matrix().asDiagonal();
@@ -225,29 +227,36 @@ PetscErrorCode PRINVIT::Compute()
     ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
 
     j++;
-    if (it == maxit && eps/base_eps < 1000)
-    {
+    if (it == maxit && eps/base_eps < 1000) {
       if (this->verbose >= 1)
-        PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, increasing tolerance to %1.2g\n", nev_conv, maxit, eps*=10);
+        PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, "
+                     "increasing tolerance to %1.2g\n", nev_conv, maxit, eps*=10);
       maxit += base_it;
     }
   }
   // Cleanup
-  if (this->verbose >= 1)
-  {
+  if (this->verbose >= 1) {
     ierr = Print_Result(); CHKERRQ(ierr);
   }
   ierr = VecDestroy(&residual); CHKERRQ(ierr);
+  this->nev_conv++;
   ierr = Compute_Clean(); CHKERRQ(ierr);
+  this->nev_conv--;
   it--;
 
   ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
   return 0;
 }
 
-/******************************************************************************/
-/**                        Remove Matrix NullSpace                           **/
-/******************************************************************************/
+/********************************************************************
+ * Remove a matrix nullspace from a vector
+ * 
+ * @param A: Matrix that has a nullspace
+ * @param x: Vector to remove nullspace from
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode PRINVIT::Remove_NullSpace(Mat A, Vec x)
 {
   PetscErrorCode ierr = 0;

@@ -9,9 +9,14 @@
 
 using namespace std;
 
-/****************************************************************/
-/**         Find next numerical value in string of text        **/
-/****************************************************************/
+/********************************************************************
+ * Find next numerical value in string of text
+ * 
+ * @param line: the string of text
+ * @param offset: the first character in the string to look at
+ * @param length: length of the string of text
+ * 
+ *******************************************************************/
 void Find_Next_Digit(const char *line, unsigned short &offset, PetscInt length)
 {
   offset = max((unsigned short)0,offset);
@@ -21,9 +26,14 @@ void Find_Next_Digit(const char *line, unsigned short &offset, PetscInt length)
   return;
 }
 
-/****************************************************************/
-/**     Get numerical values from a line in the input file     **/
-/****************************************************************/
+/********************************************************************
+ * Get numerical values from a line in the input file
+ * 
+ * @param line: the string of text
+ * 
+ * @return vals: a vector of all the numeric values
+ * 
+ *******************************************************************/
 vector<PetscScalar> Get_Values(string line)
 {
   unsigned short offset = 0;
@@ -41,9 +51,18 @@ vector<PetscScalar> Get_Values(string line)
   return vals;
 }
 
-/****************************************************************/
-/**  Set the boundary conditions using definitions from below  **/
-/****************************************************************/
+/********************************************************************
+ * Set the boundary conditions using definitions from below
+ * 
+ * @param center: center of the region where BC are applied
+ * @param radius: radius of the region where BC are applied
+ * @param limits: max extents of the region where BC are applied
+ * @param values: values of the BC to apply
+ * @param TYPE: The type of BC being applied (fixed, load, spring, etc.)
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
           ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE)
 {
@@ -120,9 +139,23 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
   return ierr;
 }
 
-/****************************************************************/
-/**       Set various parameters/options from input file       **/
-/****************************************************************/
+/********************************************************************
+ * Set various parameters/options from input file
+ * 
+ * @param optmma: instance of the MMA optimizer
+ * @param Dimensions: physical dimensions of the optimization domain
+ * @param Nel: number of elements in each dimensions
+ * @param Rmin: minimum length scale radius
+ * @param Rmax: maximum length scale radius
+ * @param Normalization: flag to calculate all possible objective
+ *                       values upon termination
+ * @param Reorder_Mesh: flag indicating if mesh should be redistributed
+ * @param mg_levels: Number of levels to use in the GMG hierarchy
+ * @param min_size: minimum matrix size per processor
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
                ArrayXPI &Nel, PetscScalar &Rmin, PetscScalar &Rmax, bool &Normalization,
                bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
@@ -376,9 +409,12 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
   return ierr;
 }
 
-/****************************************************************/
-/**                Get options from command line               **/
-/****************************************************************/
+/********************************************************************
+ * Get options from command line
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Get_CL_Options()
 {
   PetscErrorCode ierr = 0;
@@ -388,9 +424,12 @@ PetscErrorCode TopOpt::Get_CL_Options()
   return ierr;
 }
 
-/****************************************************************/
-/**                Set the optimization functions              **/
-/****************************************************************/
+/********************************************************************
+ * Set the optimization functions
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Set_Funcs()
 {
   PetscErrorCode ierr = 0;
@@ -513,10 +552,18 @@ PetscErrorCode TopOpt::Set_Funcs()
   return ierr;
 }
 
-/****************************************************************/
-/**             Check if elements should be removed            **/
-/****************************************************************/
-PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity)
+/********************************************************************
+ * Check if elements should be removed
+ * 
+ * @param Points: Centroids of each element
+ * @param elemValidity: List of whether each element is in or out
+ * @param key: What domain we're setting ("Domain", "Active", or "Passive")
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity,
+                              std::string key)
 {
   PetscErrorCode ierr = 0;
   // Variables needed for parsing input file
@@ -558,15 +605,12 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
       // Convert to all uppercase to avoid captilization errors
       line[0] = toupper(line[0]);
 
-      if (line[0] == 'E') // Ellipsoid
-      {
+      if (line[0] == 'E') { // Ellipsoid
         ArrayXPS center, radius;
         getline(file, line);
-        while (true)
-        {
+        while (true) {
           file >> line;
-          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E')
-          {
+          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E') { // Centroid
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() != (unsigned short)numDims)
@@ -574,8 +618,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
             center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
           }
-          if (toupper(line[0]) == 'R')
-          {
+          if (toupper(line[0]) == 'R') { // Radii
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() != (unsigned short)numDims)
@@ -723,9 +766,12 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
   return ierr;
 }
 
-/****************************************************************/
-/**                 Define boundary conditions                 **/
-/****************************************************************/
+/********************************************************************
+ * Define boundary conditions
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Def_BC()
 {
   PetscErrorCode ierr = 0;

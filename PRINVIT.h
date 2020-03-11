@@ -47,9 +47,13 @@ protected:
   // Cleanup after compute step
   virtual PetscErrorCode Compute_Clean() = 0;
   // Update parts of preconditioner at each step
-  virtual PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm, PetscScalar &Au_norm) = 0;
+  virtual PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm,
+                                               PetscScalar &Au_norm) = 0;
   // Output information
-  virtual PetscErrorCode Print_Result() {return PetscFPrintf(comm, output, "PRINVIT found %i of a requested %i eigenvalues after %i iterations\n\n", nev_conv, nev_req, it);}
+  virtual PetscErrorCode Print_Result() {
+    return PetscFPrintf(comm, output, "PRINVIT found %i of a requested %i eigenvalues "
+                        "after %i iterations\n\n", nev_conv, nev_req, it);
+  }
 
 };
 

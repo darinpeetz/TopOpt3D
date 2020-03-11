@@ -11,15 +11,26 @@ typedef Eigen::Array<PetscInt, -1, 1> ArrayXPI;
 typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 
-/// This method calls Create_Interpolation repeatedly to construct all interpolation
-/// matrices for the full multigrid hierarchy.  The matrices are not assembled to make
-/// any renumberings from element redistribution easier.
-// I: row indices (the fine nodes)
-// J: col indices (the coarse nodes)
-// K: interpolation coefficients
-// cList: the coarse nodes on each level
-int TopOpt::Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel,
-            ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels )
+/********************************************************************
+ * This method calls Create_Interpolation repeatedly to construct all interpolation
+ * matrices for the full multigrid hierarchy.  The matrices are not assembled to make
+ * any renumberings from element redistribution easier.
+ * 
+ * @param first: First element on this process in each dimension
+ * @param last: Last element on this process in each dimension
+ * @param Nel: Number of elements in each direction
+ * @param I: row indices (the fine nodes)
+ * @param J: col indices (the coarse nodes)
+ * @param K: interpolation coefficients
+ * @param cList: the coarse nodes on each level
+ * @param mg_levels: The number of multigrid levels to create
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+int TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
+                                  ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                  ArrayXPI *cList, PetscInt mg_levels)
 {
   // Number of nodes in each direction on current grid (Nf), and node
   // breakdown on this process (firstf and lastf)
@@ -36,8 +47,7 @@ int TopOpt::Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel
   ArrayXPI yBase = ArrayXPI::LinSpaced(Nf(1), 0, Nf(1)-1);
   ArrayXPI zBase = ArrayXPI::LinSpaced(Nf(2), 0, Nf(2)-1);
 
-  for (int i = 0; i < mg_levels-1; i++)
-  {  
+  for (int i = 0; i < mg_levels-1; i++) {  
     // Create the interpolation triplets for this restriction
 
     PetscErrorCode ierr = Create_Interpolation(firstf, lastf,
@@ -48,8 +58,7 @@ int TopOpt::Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel
     lastf.segment(0,numDims) = (lastf.segment(0,numDims)+1)/2;
     // Replace relative node numberings in these arrays with actual node numbers
     // Fine nodes first (if necessary)
-    if (i > 0)
-    {
+    if (i > 0) {
       for (int j = 0; j < I[i].size(); j++)
         I[i](j) = cList[i-1](I[i](j));
     }
@@ -82,16 +91,29 @@ int TopOpt::Create_Interpolations( PetscInt *first, PetscInt *last, ArrayXPI Nel
   return 0;
 }
 
-/// This method produces creates i,j,k indices to assemble an interpolation
-/// matrix from a fine to a coarse grid.  The matrix is not assembled to make
-/// any renumberings from element redistribution easier
-int TopOpt::Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
-                     ArrayXPI &Nf, ArrayXPI &I, ArrayXPI &J, ArrayXPS &K )
+/********************************************************************
+ * This method produces creates i,j,k indices to assemble an interpolation
+ * matrix from a fine to a coarse grid.  The matrix is not assembled to make
+ * any renumberings from element redistribution easier
+ * 
+ * @param first: First element on this process in each dimension
+ * @param last: Last element on this process in each dimension
+ * @param Nf: Number of fine nodes in each direction
+ * @param I: row indices (the fine nodes)
+ * @param J: col indices (the coarse nodes)
+ * @param K: interpolation coefficients
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+int TopOpt::Create_Interpolation (ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
+                                  ArrayXPI &I, ArrayXPI &J, ArrayXPS &K)
 {
   ArrayXPI Nc = (Nf+1)/2;
   if ((Nf < last).any())
-    SETERRQ6(comm, PETSC_ERR_ARG_INCOMP, "Local elements (%i, %i, %i)  extend beyond total elements(%i, %i, %i)",
-            last(0), last(1), last(2), Nf(0), Nf(1), Nf(2));
+    SETERRQ6(comm, PETSC_ERR_ARG_INCOMP, "Local elements (%i, %i, %i) "
+             "extend beyond total elements(%i, %i, %i)",
+             last(0), last(1), last(2), Nf(0), Nf(1), Nf(2));
 
   PetscInt numvals = pow(3, numDims)*Nc(0)*Nc(1)*Nc(2);
   I.resize(numvals); J.resize(numvals); K.resize(numvals); 
@@ -99,15 +121,12 @@ int TopOpt::Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
 
   // Loop over local COARSE nodes
   PetscInt ind = 0;
-  PetscInt ckmax = last(2), ckmin = ((first(2)+1)/2)*2;//(last[2]==Nf(2) ? last[2]+1 : last[2]);
-  PetscInt cjmax = last(1), cjmin = ((first(1)+1)/2)*2;//(last[1]==Nf(1) ? last[1]+1 : last[1]);
-  PetscInt cimax = last(0), cimin = ((first(0)+1)/2)*2;//(last[0]==Nf(0) ? last[0]+1 : last[0]);
-  for (PetscInt ck = ckmin; ck < ckmax; ck+=2)
-  {
-    for (PetscInt cj = cjmin; cj < cjmax; cj+=2)
-    {
-      for (PetscInt ci = cimin; ci < cimax; ci+=2)
-      {
+  PetscInt ckmax = last(2), ckmin = ((first(2)+1)/2)*2; // (last[2]==Nf(2) ? last[2]+1 : last[2]);
+  PetscInt cjmax = last(1), cjmin = ((first(1)+1)/2)*2; // (last[1]==Nf(1) ? last[1]+1 : last[1]);
+  PetscInt cimax = last(0), cimin = ((first(0)+1)/2)*2; // (last[0]==Nf(0) ? last[0]+1 : last[0]);
+  for (PetscInt ck = ckmin; ck < ckmax; ck+=2) {
+    for (PetscInt cj = cjmin; cj < cjmax; cj+=2) {
+      for (PetscInt ci = cimin; ci < cimax; ci+=2) {
         PetscInt cnode = ci/2 + (cj/2)*Nc(0) + (ck/2)*Nc(0)*Nc(1);
         PetscInt fkmin = ck > 0 ? -1 : 0;
         PetscInt fkmax = ck < Nf[2]-1 ? 1 : 0;
@@ -115,12 +134,9 @@ int TopOpt::Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
         PetscInt fjmax = cj < Nf[1]-1 ? 1 : 0;
         PetscInt fimin = ci > 0 ? -1 : 0;
         PetscInt fimax = ci < Nf[0]-1 ? 1 : 0;
-        for (PetscInt fk = fkmin; fk <= fkmax; fk++)
-        {
-          for (PetscInt fj = fjmin; fj <= fjmax; fj++)
-          {
-            for (PetscInt fi = fimin; fi <= fimax; fi++)
-            {
+        for (PetscInt fk = fkmin; fk <= fkmax; fk++) {
+          for (PetscInt fj = fjmin; fj <= fjmax; fj++) {
+            for (PetscInt fi = fimin; fi <= fimax; fi++) {
               I(ind) = (ci+fi) + (cj+fj)*Nf(0) + (ck+fk)*Nf(0)*Nf(1);
               J(ind) = cnode;
               K(ind++) = vals(fi+1) * vals(fj+1) * vals(fk+1);
@@ -137,8 +153,22 @@ int TopOpt::Create_Interpolation ( ArrayXPI &first, ArrayXPI &last,
   return 0;
 }
 
-/// This method assembles the interpolation matrices
-int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, PetscInt mg_levels, PetscInt min_size )
+/********************************************************************
+ * This method assembles the interpolation matrices
+ * 
+ * @param I: row indices (the fine nodes)
+ * @param J: col indices (the coarse nodes)
+ * @param K: interpolation coefficients
+ * @param cList: the coarse nodes on each level
+ * @param mg_levels: The number of multigrid levels to create
+ * @param min_size: Minimum matrix size on each process
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+int TopOpt::Assemble_Interpolation (ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                    ArrayXPI *cList, PetscInt mg_levels,
+                                    PetscInt min_size)
 {
   PetscErrorCode ierr = 0;
   // Preallocation arrays
@@ -162,8 +192,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
   if (min_size <= 0)
     min_size = cList[mg_levels-2].size();
   
-  for (int i = 0; i < mg_levels-1; i++)
-  {
+  for (int i = 0; i < mg_levels-1; i++) {
     // Sort all the coarse nodes to determine their numbers at this level
     // e.g. fine node numbers are 8,1,5, so need to set coarse numbers to 3,1,2
     ind.segment(0,cList[i].size()) = ArrayXPI::LinSpaced(cList[i].size(), 0, cList[i].size()-1);
@@ -186,8 +215,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
                           i+1, min(this->nprocs, nprocs)); CHKERRQ(ierr);
     if (i == mg_levels-2)
       MPI_Comm_split(this->comm, myid == 0 ? 0 : MPI_UNDEFINED, 0, this->MG_comms.data()+i+1);
-    if (nprocs < this->nprocs)
-    {
+    if (nprocs < this->nprocs) {
       MPI_Comm_split(this->comm, myid < nprocs ? 0 : MPI_UNDEFINED, 0, this->MG_comms.data()+i+1);
       nddist.setConstant(this->nNode);
       nddist.segment(0, nprocs+1) = ArrayXPI::LinSpaced(nprocs+1, 0, this->nNode);
@@ -204,8 +232,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
       lRows = lCols;
 
     // Coarsest interpolator works a little different
-    if (i == mg_levels-2)
-    {
+    if (i == mg_levels-2) {
       // Set matrix size
       lCols.setConstant(gCols); lCols(0) = 0;
       ierr = MatSetSizes(this->PR[i], numDims*(lRows(myid+1)-lRows(myid)),
@@ -222,25 +249,21 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
         J[i](j) = invind(J[i](j));
 
       // Want coarsest matrix to be all on proc 0
-      if (myid == 0)
-      {
+      if (myid == 0) {
         ArrayXPI zero = ArrayXPI::Zero(gRows);
         MPI_Wait(&on_req, MPI_STATUS_IGNORE);
         ierr = MatXAIJSetPreallocation(this->PR[i], this->numDims, onDiag+lRows(myid), zero.data(), 0, 0); CHKERRQ(ierr);
       }
-      else
-      {
+      else {
         ArrayXPI zero = ArrayXPI::Zero(gRows);
         MPI_Wait(&on_req, MPI_STATUS_IGNORE);
         ierr = MatXAIJSetPreallocation(this->PR[i], this->numDims, zero.data(), onDiag+lRows(myid), 0, 0); CHKERRQ(ierr);
       }
     }
-    else // All other interpolators
-    {
+    else { // All other interpolators
       // Set local column numbers
       lCols.setZero();
-      for (int j = 0; j < cList[i].size(); j++)
-      {
+      for (int j = 0; j < cList[i].size(); j++) {
         int proc = 1;
         while (cList[i](j) >= nddist(proc))
           proc++;
@@ -250,10 +273,8 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
 
       // Get preallocation sizes and update J arrays with level-specific node numbers;
       PetscInt oldcol = 0, newcol = 0, proc = 0;
-      for (int j = 0; j < J[i].size(); j++)
-      {
-        if (J[i](j) != oldcol)
-        {
+      for (int j = 0; j < J[i].size(); j++) {
+        if (J[i](j) != oldcol) {
           oldcol = J[i](j);
           newcol = invind(oldcol);
           proc = 0;
@@ -261,7 +282,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
             proc++; // process that the column is on
         }
         J[i](j) = newcol;
-        if ( (I[i](j) >= lRows(proc)) && (I[i](j) < lRows(proc+1)) )
+        if ((I[i](j) >= lRows(proc)) && (I[i](j) < lRows(proc+1)))
           onDiag[I[i](j)]++;
         else
           offDiag[I[i](j)]++;
@@ -285,8 +306,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
     }
 
     // Assemble the matrix
-    for (int j = 0; j < I[i].size(); j++)
-    {
+    for (int j = 0; j < I[i].size(); j++) {
       MatrixXPS vals = K[i](j)*MatrixXPS::Identity(numDims, numDims);
       ierr = MatSetValuesBlocked(this->PR[i], 1, I[i].data()+j, 1, J[i].data()+j,
         vals.data(), INSERT_VALUES); CHKERRQ(ierr);
@@ -302,8 +322,7 @@ int TopOpt::Assemble_Interpolation ( ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, Arra
     ierr = MatGetRowSum(this->PR[i], rowSum); CHKERRQ(ierr);
     PetscInt location; PetscScalar minimum;
     ierr = VecMin(rowSum, &location, &minimum); CHKERRQ(ierr);
-    if (minimum == 0.0)
-    {
+    if (minimum == 0.0) {
       this->PR.resize(i);
       break;
       ierr = PetscPrintf(comm, "Fine node #%i in interpolation matrix %i is ", location, i); CHKERRQ(ierr);
