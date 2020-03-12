@@ -108,7 +108,7 @@ PetscErrorCode PRINVIT::Compute()
 
   // The actual computation loop
   it = 0;
-  while (it++ < maxit) {
+  while ((it++/(nev_conv+1)) < maxit) {
     eps_sub.compute(G.block(0,0,j,j));
     W = eps_sub.eigenvectors();
     S = eps_sub.eigenvalues();
@@ -201,8 +201,26 @@ PetscErrorCode PRINVIT::Compute()
     ierr = PetscLogEventEnd(EIG_Update, 0, 0, 0, 0); CHKERRQ(ierr);
 
     ierr = PetscLogEventBegin(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
-    // This loop is to prevent NaN breakdown
-    while (true) {
+
+    // Ensure orthogonality
+    ierr = Mgsm(Q[0], BQ[0], V[j], nev_conv+1); CHKERRQ(ierr);
+    ierr = Icgsm(V, B[0], V[j], orth_norm, j); CHKERRQ(ierr);
+    ierr = Remove_NullSpace(this->B[0], V[j]); CHKERRQ(ierr);
+
+    // Re-normalize
+    ierr = MatMult(this->B[0], V[j], TempVecs[0]); CHKERRQ(ierr);
+    ierr = VecDot(V[j], TempVecs[0], &orth_norm); CHKERRQ(ierr);
+    ierr = VecScale(V[j], 1/sqrt(orth_norm)); CHKERRQ(ierr);
+
+    // Update search space
+    ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
+    ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
+    G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
+
+    // This is to prevent NaN breakdown if update was bad      
+    if (isnan(G(j,j))) {
+      ierr = VecSetRandom(V[j], NULL); CHKERRQ(ierr);
+
       // Ensure orthogonality
       ierr = Mgsm(Q[0], BQ[0], V[j], nev_conv+1); CHKERRQ(ierr);
       ierr = Icgsm(V, B[0], V[j], orth_norm, j); CHKERRQ(ierr);
@@ -216,18 +234,13 @@ PetscErrorCode PRINVIT::Compute()
       // Update search space
       ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
       ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
-      G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
-      
-      if (isnan(G(j,j))) {
-        ierr = VecSetRandom(V[j], NULL); CHKERRQ(ierr);
-      }
-      else
-        break;
+      G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose()
     }
+     
     ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
 
     j++;
-    if (it == maxit && eps/base_eps < 1000) {
+    if ((it/(nev_conv+1)) == maxit && eps/base_eps < 1000) {
       if (this->verbose >= 1)
         PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, "
                      "increasing tolerance to %1.2g\n", nev_conv, maxit, eps*=10);
