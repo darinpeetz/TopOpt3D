@@ -234,7 +234,7 @@ PetscErrorCode PRINVIT::Compute()
       // Update search space
       ierr = MatMult(A[0], V[j], TempVecs[0]); CHKERRQ(ierr);
       ierr = VecMDot(TempVecs[0], j+1, V, G.data()+j*jmax); CHKERRQ(ierr);
-      G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose()
+      G.block(j, 0, 1, j) = G.block(0, j, j, 1).transpose();
     }
      
     ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
