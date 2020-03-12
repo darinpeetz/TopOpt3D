@@ -513,20 +513,24 @@ PetscErrorCode TopOpt::SetMatNullSpace()
     }
   }
 
-  // Adjust the diagonal and zero out detached parts of the rigid body modes
-  PetscScalar *p_U, **p_Vecs;
-  ierr = VecGetArray(this->U, &p_U); CHKERRQ(ierr);
-  ierr = VecGetArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
-  for (PetscInt i = 0; i < this->numDims*this->nLocNode; i++) {
-    if (p_U[i] == 0) {
-      for (mode = 0; mode < nRBM; mode++)
-        p_Vecs[mode][i] = 0;
+  // Zero out detached parts of the rigid body modes
+  PetscScalar minStiff;
+  ierr = VecMin(this->E, NULL, &minStiff); CHKERRQ(ierr);
+  if (minStiff == 0) {
+    PetscScalar *p_U, **p_Vecs;
+    ierr = VecGetArray(this->U, &p_U); CHKERRQ(ierr);
+    ierr = VecGetArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
+    for (PetscInt i = 0; i < this->numDims*this->nLocNode; i++) {
+      if (p_U[i] == 0) {
+        for (mode = 0; mode < nRBM; mode++)
+          p_Vecs[mode][i] = 0;
+      }
+      else if (this->KUF_reason == KSP_CONVERGED_ITERATING)
+        p_U[i] = 0; // See note in IsolateRigid
     }
-    else if (this->KUF_reason == KSP_CONVERGED_ITERATING)
-      p_U[i] = 0; // See note in IsolateRigid
+    ierr = VecRestoreArray(this->U, &p_U); CHKERRQ(ierr);
+    ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
   }
-  ierr = VecRestoreArray(this->U, &p_U); CHKERRQ(ierr);
-  ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
 
   // Normalize the nullspace vectors
   PetscScalar dots[nRBM-1];
