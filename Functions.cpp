@@ -51,13 +51,10 @@ PetscErrorCode Function_Base::Compute(TopOpt *topOpt)
                         "Tabulating results of %s function\n",
                          name[this->func_type]); CHKERRQ(ierr);
   }
-  // value = 0; gradient.setZero();
-  // for (PetscInt i = 0; i < weights.size(); i++) {
-    PetscInt i = 0;
-    value = (objective==PETSC_TRUE?weights(i):1)*(values(i)-min_val);
-    value -= (objective==PETSC_TRUE?0:weights(i));
-    gradient = (objective==PETSC_TRUE?weights(i):1)*gradients.col(i);
-  // }
+  PetscInt i = 0;
+  value = (objective==PETSC_TRUE?weights(i):1)*(values(i)-min_val);
+  value -= (objective==PETSC_TRUE?0:weights(i));
+  gradient = (objective==PETSC_TRUE?weights(i):1)*gradients.col(i);
   value /= max_val-min_val;
   gradient /= max_val-min_val;
 
