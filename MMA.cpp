@@ -166,7 +166,9 @@ int MMA::OCsub(Eigen::VectorXd &dfdx, Eigen::VectorXd &g, Eigen::MatrixXd &dgdx)
       xval(i) = 0;
   }
 
-  Change = ((xval-xold1).cwiseQuotient(xmax-xmin)).cwiseAbs().maxCoeff();
+  Change = ((*p_x-xold1).cwiseQuotient(*p_xmax-*p_xmin)).cwiseAbs().maxCoeff();
+  ierr = MPI_Allreduce(MPI_IN_PLACE, &Change, 1, MPI_DOUBLE, MPI_MAX, Comm);
+
   return ierr;
 }
 
