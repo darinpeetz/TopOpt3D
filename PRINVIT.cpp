@@ -481,6 +481,7 @@ PetscErrorCode PRINVIT::Compute()
   ierr = Compute_Clean(); CHKERRQ(ierr);
   this->nev_conv--;
   it--;
+  eps = base_eps;
 
   ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
   return 0;
