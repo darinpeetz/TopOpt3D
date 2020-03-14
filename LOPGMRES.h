@@ -14,8 +14,7 @@ class LOPGMRES : public PRINVIT
 public:
   /// Class methods
   // Constructors
-  LOPGMRES() {LOPGMRES(MPI_COMM_WORLD);}
-  LOPGMRES(MPI_Comm comm);
+  LOPGMRES(MPI_Comm comm=MPI_COMM_WORLD);
   // Destructor
   ~LOPGMRES();
   // How much information to print
@@ -32,9 +31,6 @@ private:
   /// Private methods
   // Prepare solver for compute step
   PetscErrorCode Compute_Init();
-  PetscErrorCode Initialize_V(PetscInt &j);
-  // Cleanup after compute step
-  PetscErrorCode Compute_Clean();
   // Multigrid solver
   PetscErrorCode Update_Preconditioner(Vec residual, PetscScalar &rnorm,
                                        PetscScalar &Au_norm);

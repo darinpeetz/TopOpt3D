@@ -16,8 +16,7 @@ class JDMG : public PRINVIT
 public:
   /// Class methods
   // Constructors
-  JDMG() {JDMG(MPI_COMM_WORLD);}
-  JDMG(MPI_Comm comm);
+  JDMG(MPI_Comm comm=MPI_COMM_WORLD);
   // Destructor
   ~JDMG();
   // How much information to print
@@ -77,7 +76,7 @@ private:
   PetscErrorCode Compute_Init();
   PetscErrorCode Setup_Coarse();
   PetscErrorCode Create_Hierarchy();
-  PetscErrorCode Initialize_V(PetscInt &j);
+  PetscErrorCode Initialize_V();
   // Update the search space with the correction equation
   PetscErrorCode Update_Search(Vec x, Vec residual, PetscReal rnorm);
   // Cleanup after compute step

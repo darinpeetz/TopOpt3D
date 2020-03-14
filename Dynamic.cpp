@@ -3,8 +3,6 @@
 #include "Functions.h"
 #include "TopOpt.h"
 #include "EigLab.h"
-#include "JDMG.h"
-#include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
 
 using namespace std;
@@ -56,8 +54,7 @@ PetscErrorCode Frequency::Function(TopOpt *topOpt)
     ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
   }
 
-  // Create LOPGMRES instance
-  LOPGMRES lopgmres(topOpt->comm);
+  // Set ouptput parameters for lopgmres
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
   

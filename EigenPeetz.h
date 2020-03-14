@@ -49,10 +49,10 @@ public:
     PetscErrorCode ierr = PetscFClose(comm, output); CHKERRQ(ierr); }
     return 0; }
   // Set operators of eigensystem
-  PetscErrorCode Set_Operators(Mat A, Mat B);
+  virtual PetscErrorCode Set_Operators(Mat A, Mat B);
   // Setting target eigenvalues and number to find
-  PetscErrorCode Set_Target(Tau tau, PetscInt nev, Nev_Type ntype);
-  PetscErrorCode Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype);
+  virtual PetscErrorCode Set_Target(Tau tau, PetscInt nev, Nev_Type ntype);
+  virtual PetscErrorCode Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype);
   PetscErrorCode Set_Tol(PetscScalar tol);
   PetscErrorCode Set_MaxIt(PetscInt maxit);
   PetscInt Get_It() {return it;}

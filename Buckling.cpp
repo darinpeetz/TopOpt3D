@@ -2,8 +2,6 @@
 #include "Functions.h"
 #include "TopOpt.h"
 #include "EigLab.h"
-#include "JDMG.h"
-#include "LOPGMRES.h"
 #include <unsupported/Eigen/KroneckerProduct>
 
 /********************************************************************
@@ -51,7 +49,7 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
     }
   }
 
-  LOPGMRES lopgmres(topOpt->comm);
+  // Set ouptput parameters for lopgmres
   lopgmres.Set_Verbose(topOpt->verbose);
   lopgmres.Set_File(topOpt->output);
 

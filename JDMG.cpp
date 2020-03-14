@@ -207,9 +207,13 @@ PetscErrorCode JDMG::Compute_Init()
     ierr = PetscFPrintf(comm, output, "Initializing compute structures\n"); CHKERRQ(ierr);
 
   ierr = PetscLogEventBegin(EIG_Comp_Init, 0, 0, 0, 0); CHKERRQ(ierr);
+
   // Clear any old eigenvectors
-  if (nev_conv > 0)
+  ierr = Setup_Q(); CHKERRQ(ierr);
+  if (nev_conv > 0) {
     ierr = VecDestroyVecs(nev_conv, &phi); CHKERRQ(ierr);
+  }
+  nev_conv = 0;
 
   // Check if MG cycle type was set at command line
   const PetscInt ct_length = 5;
@@ -232,34 +236,7 @@ PetscErrorCode JDMG::Compute_Init()
                   "\"FULL\" or \"V\"", cycle_type);
   }
 
-  // Preallocate eigenvalues and eigenvectors at each level and get problem size
-  Vec temp;
-  Q.resize(levels); AQ.resize(levels); BQ.resize(levels);
-  for (int ii = 0; ii < levels; ii++) {
-    ierr = MatCreateVecs(A[ii], &temp, NULL); CHKERRQ(ierr);
-    ierr = VecDuplicateVecs(temp, Qsize, Q.data()+ii); CHKERRQ(ierr);
-    ierr = VecDuplicateVecs(temp, Qsize, AQ.data()+ii); CHKERRQ(ierr);
-    ierr = VecDuplicateVecs(temp, Qsize, BQ.data()+ii); CHKERRQ(ierr);
-    ierr = VecDestroy(&temp); CHKERRQ(ierr);
-  }
-  lambda.setOnes(Qsize);
-  ierr = VecGetSize(Q[0][0], &n); CHKERRQ(ierr);
-  ierr = VecGetLocalSize(Q[0][0], &nlocal); CHKERRQ(ierr);
-
-  // Determine size of search space
-  ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_jmin", &jmin, NULL); CHKERRQ(ierr);
-  ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_jmax", &jmax, NULL); CHKERRQ(ierr);
-  if (jmin < 0)
-    jmin = std::min(std::max(2*nev_req, 10), std::min(n/2,10));
-  if (jmax < 0)
-    jmax = std::min(std::max(4*nev_req, 25), std::min(n , 50));
-
-  // Preallocate search space, work space, and eigenvectors
-  ierr = VecDuplicateVecs(Q[0][0], jmax, &V); CHKERRQ(ierr);
-  ierr = VecDuplicateVecs(Q[0][0], jmax, &TempVecs); CHKERRQ(ierr);
-  TempScal.setZero(std::max(jmax,Qsize));
-  
-// Check for options in MG preconditioner
+  // Check for options in MG preconditioner
   ierr = PetscOptionsGetInt(NULL, NULL, "-JDMG_Jacobi_nSweep", &nsweep, NULL); CHKERRQ(ierr);
   ierr = PetscOptionsGetReal(NULL, NULL, "-JDMG_Jacobi_Weight", &w, NULL); CHKERRQ(ierr);
   // Preallocate for operators
@@ -498,12 +475,12 @@ PetscErrorCode JDMG::Compute_Coarse()
 /********************************************************************
  * Initialize the search space
  * 
- * @param j: Number of vectors to initialize
- * 
  * @return ierr: PetscErrorCode
  * 
+ * @options: -JDMG_Static_Start: Use nonrandom initial search space
+ * 
  *******************************************************************/
-PetscErrorCode JDMG::Initialize_V(PetscInt &j)
+PetscErrorCode JDMG::Initialize_V()
 {
   PetscErrorCode ierr = 0;
 
@@ -514,7 +491,7 @@ PetscErrorCode JDMG::Initialize_V(PetscInt &j)
     PetscInt first;
     PetscScalar *p_vec;
     ierr = MatGetOwnershipRange(A[0], &first, NULL); CHKERRQ(ierr);
-    for (int ii = 0; ii < jmin; ii++) {
+    for (int ii = j; ii < jmin; ii++) {
       ierr = VecGetArray(V[ii], &p_vec); CHKERRQ(ierr);
       for (int jj = 0; jj < nlocal; jj++)
         p_vec[jj] = pow(jj+first+1,ii);
@@ -525,7 +502,7 @@ PetscErrorCode JDMG::Initialize_V(PetscInt &j)
   else {
     ierr = Compute_Coarse(); CHKERRQ(ierr);
     j = std::min(nev_conv, jmax);
-    for (int ii = 0; ii < j; ii++) {
+    for (int ii = j; ii < j; ii++) {
       ierr = VecCopy(Q[0][ii], V[ii]); CHKERRQ(ierr);
     }
   }
@@ -625,18 +602,8 @@ PetscErrorCode JDMG::Compute_Clean()
     ierr = VecCopy(Q[0][order(ii)], phi[ii]); CHKERRQ(ierr);
   }
 
-  // Destroy eigenvectors at each level
-  for (int ii = 0; ii < levels; ii++) {
-    ierr = VecDestroyVecs(Qsize, Q.data()+ii);  CHKERRQ(ierr);
-    ierr = VecDestroyVecs(Qsize, AQ.data()+ii); CHKERRQ(ierr);
-    ierr = VecDestroyVecs(Qsize, BQ.data()+ii); CHKERRQ(ierr);
-    ierr = MatDestroy(K.data() + ii); CHKERRQ(ierr);
-  }
-  AQ.resize(0); BQ.resize(0);
-
-  // Destroy workspace and search space
-  ierr = VecDestroyVecs(jmax, &V); CHKERRQ(ierr);
-  ierr = VecDestroyVecs(jmax, &TempVecs); CHKERRQ(ierr);
+  // Destroy eigenvector storage space at each level
+  ierr = Destroy_Q(); CHKERRQ(ierr);
 
   // Destroy coarse problem
   ierr = KSPDestroy(&ksp_coarse); CHKERRQ(ierr);

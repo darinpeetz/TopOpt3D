@@ -3,6 +3,8 @@
 
 #include <Eigen/Eigen>
 #include <slepceps.h>
+#include "JDMG.h"
+#include "LOPGMRES.h"
 
 typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 typedef Eigen::Matrix<PetscScalar, -1, 1>  VectorXPS;
@@ -94,8 +96,10 @@ public:
   Stability(std::vector<PetscScalar> &values, PetscScalar min_val,
             PetscScalar max_val, PetscBool objective,
             PetscBool calc_gradient=PETSC_TRUE) :
-            Function_Base(values, min_val, max_val, objective,
-                          calc_gradient) {Ks = NULL; func_type = STABILITY;}
+              Function_Base(values, min_val, max_val, objective,
+                            calc_gradient), lopgmres() {
+              Ks = NULL; func_type = STABILITY;
+            }
   ~Stability() {MatDestroy(&Ks);}
 
 protected:
@@ -107,6 +111,8 @@ protected:
   MatrixXPS dKsdu;
   // Adjoint vector
   MatrixXPS v;
+  // Eigensolver
+  LOPGMRES lopgmres;
   // Internal functions
   PetscErrorCode StressFnc(TopOpt *topOpt);
   MatrixXPS sigtos(VectorXPS sigma);
@@ -119,8 +125,9 @@ public:
   Frequency(std::vector<PetscScalar> &values, PetscScalar min_val,
             PetscScalar max_val, PetscBool objective,
             PetscBool calc_gradient=PETSC_TRUE) :
-            Function_Base(values, min_val, max_val, objective,
-                          calc_gradient) {M = NULL; func_type = FREQUENCY;}
+              Function_Base(values, min_val, max_val, objective,
+                            calc_gradient), lopgmres() {
+              M = NULL; func_type = FREQUENCY;}
   ~Frequency() {MatDestroy(&M);}
 
 protected:
@@ -128,6 +135,8 @@ protected:
   Mat M;
   // Mass matrix partial sensitivity
   VectorXPS dMdy;
+  // Eigensolver
+  LOPGMRES lopgmres;
   // Internal functions
   PetscErrorCode DiagMassFnc(TopOpt *topOpt);
   PetscErrorCode Function(TopOpt *topOpt);

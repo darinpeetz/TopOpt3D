@@ -27,9 +27,15 @@ void daxpy_(const int *N, const double *a, const double *x, const int *incx,
  *******************************************************************/
 PRINVIT::PRINVIT()
 {
+  PetscErrorCode ierr = 0;
+  // Determine size of search space
+  jmin = -1, jmax = -1;
   Qsize = nev_req;
-  jmin = -1; jmax = -1;
-  PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &verbose, NULL);
+  ierr = PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &verbose, NULL); CHKERRV(ierr);
+  ierr = PetscOptionsGetInt(NULL, NULL, "-PRINVIT_jmin", &jmin, &jmin_set); CHKERRV(ierr);
+  ierr = PetscOptionsGetInt(NULL, NULL, "-PRINVIT_jmax", &jmax, &jmax_set); CHKERRV(ierr);
+  this->V = NULL;
+  TempVecs = NULL;
 }
 
 /********************************************************************
@@ -38,6 +44,12 @@ PRINVIT::PRINVIT()
  *******************************************************************/
 PRINVIT::~PRINVIT()
 {
+  PetscErrorCode ierr = 0;
+  // Destroy workspace and search space
+  if (V != NULL) {
+    ierr = VecDestroyVecs(jmax, &V); CHKERRV(ierr);
+    ierr = VecDestroyVecs(jmax, &TempVecs); CHKERRV(ierr);
+  }
 }
 
 /********************************************************************
@@ -53,6 +65,219 @@ PetscErrorCode PRINVIT::Set_Verbose(PetscInt verbose)
   this->verbose = verbose;
   PetscErrorCode ierr = PetscOptionsGetInt(NULL, NULL, "-PRINVIT_Verbose", &this->verbose, NULL);
   CHKERRQ(ierr);
+  return 0;
+}
+
+/********************************************************************
+ * Set the operators that define the eigen system
+ * 
+ * @param A: The first matrix
+ * @param B: The (optional) second matrix
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Set_Operators(Mat A, Mat B)
+{
+  PetscErrorCode ierr = 0;
+
+  ierr = EigenPeetz::Set_Operators(A, B); CHKERRQ(ierr);
+  ierr = Update_jmin(); CHKERRQ(ierr);
+  ierr = Update_jmax(); CHKERRQ(ierr);
+  ierr = Setup_Q(); CHKERRQ(ierr);
+
+  return 0;
+}
+
+/********************************************************************
+ * Set up the space to store eigenvector approximations
+ * 
+ * @param A: The first matrix
+ * @param B: The (optional) second matrix
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Setup_Q()
+{
+  PetscErrorCode ierr = 0;
+
+  // Preallocate eigenvector storage space
+  Vec temp;
+  Q.resize(this->A.size()); AQ.resize(this->A.size()); BQ.resize(this->A.size());
+  for (int ii = 0; ii < this->A.size(); ii++) {
+    ierr = MatCreateVecs(A[ii], &temp, NULL); CHKERRQ(ierr);
+    ierr = VecDuplicateVecs(temp, Qsize, Q.data()+ii); CHKERRQ(ierr);
+    ierr = VecDuplicateVecs(temp, Qsize, AQ.data()+ii); CHKERRQ(ierr);
+    ierr = VecDuplicateVecs(temp, Qsize, BQ.data()+ii); CHKERRQ(ierr);
+    ierr = VecDestroy(&temp); CHKERRQ(ierr);
+  }
+  lambda.setOnes(Qsize);
+  ierr = VecGetSize(Q[0][0], &n); CHKERRQ(ierr);
+  ierr = VecGetLocalSize(Q[0][0], &nlocal); CHKERRQ(ierr);
+
+  return 0;
+}
+
+/********************************************************************
+ * Destroy the space to store eigenvector approximations
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Destroy_Q()
+{
+  PetscErrorCode ierr = 0;
+
+  // Destroy existing space
+  for (PetscInt i = 0; i < this->Q.size(); i++) {
+    ierr = VecDestroyVecs(Qsize, Q.data()+i); CHKERRQ(ierr);
+    ierr = VecDestroyVecs(Qsize, AQ.data()+i); CHKERRQ(ierr);
+    ierr = VecDestroyVecs(Qsize, BQ.data()+i); CHKERRQ(ierr);
+  }
+  Q.resize(0); AQ.resize(0); BQ.resize(0);
+
+  return 0;
+}
+
+/********************************************************************
+ * Sets target eigenvalues and number to find
+ * 
+ * @param tau: The target type (e.g. 'LM') or a target value
+ * @param nev: The number of eigenmodes to calculate
+ * @param ntype: The type of eigenvalues (e.g. 6 total, or 6 unique)
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Set_Target(Tau tau, PetscInt nev, Nev_Type ntype)
+{
+  PetscErrorCode ierr = 0;
+  
+  ierr = EigenPeetz::Set_Target(tau, nev, ntype); CHKERRQ(ierr);
+  ierr = Update_jmin(); CHKERRQ(ierr);
+  ierr = Update_jmax(); CHKERRQ(ierr);
+
+  return ierr;
+}
+PetscErrorCode PRINVIT::Set_Target(PetscScalar tau, PetscInt nev, Nev_Type ntype)
+{ 
+  PetscErrorCode ierr = 0;
+
+  ierr = EigenPeetz::Set_Target(tau, nev, ntype); CHKERRQ(ierr);
+  ierr = Update_jmin(); CHKERRQ(ierr);
+  ierr = Update_jmax(); CHKERRQ(ierr);
+
+  return ierr;
+}
+
+/********************************************************************
+ * Update the search space size
+ * 
+ * @param jmin: Minimum search space size
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Update_jmin(PetscInt jmin)
+{
+  if (jmin_set == PETSC_FALSE) {
+    if (jmin > 0) {
+      this->jmin = jmin;
+      jmin_set = PETSC_TRUE;
+    }
+    else
+      this->jmin = std::min(std::max(2*nev_req, 10), std::min(n/2,10));
+  }
+
+  return 0;
+}
+
+/********************************************************************
+ * Update the search space size
+ * 
+ * @param jmin: Maximum search space size
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Update_jmax(PetscInt jmax)
+{
+  PetscErrorCode ierr = 0;
+
+  PetscInt new_jmax;
+  if (jmax_set == PETSC_FALSE) {
+    if (jmax > 0) {
+      new_jmax = jmax;
+      jmax_set = PETSC_TRUE;
+    }
+    else
+      new_jmax = std::min(std::max(4*nev_req, 25), std::min(n, 50));
+    if (this->jmax == new_jmax)
+      return 0;
+
+    // Preallocate search space, work space, and eigenvectors
+    if (V != NULL) {
+      ierr = VecDestroyVecs(this->jmax, &V); CHKERRQ(ierr);
+      ierr = VecDestroyVecs(this->jmax, &TempVecs); CHKERRQ(ierr);
+    }
+    this->jmax = new_jmax;
+    j = 0;
+    if (this->A.size() > 0) {
+      Vec temp;
+      ierr = MatCreateVecs(A[0], &temp, NULL); CHKERRQ(ierr);
+      ierr = VecDuplicateVecs(temp, this->jmax, &V); CHKERRQ(ierr);
+      ierr = VecDuplicateVecs(temp, this->jmax, &TempVecs); CHKERRQ(ierr);
+      TempScal.setZero(std::max(this->jmax, Qsize));
+      ierr = VecDestroy(&temp); CHKERRQ(ierr);
+    }
+  }
+
+  return 0;
+}
+
+/********************************************************************
+ * Initialize the search space
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ * @options: -PRINVIT_Static_Start: Use nonrandom initial search space
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Initialize_V()
+{
+  PetscErrorCode ierr = 0;
+
+  // Use Krylov-Schur on smallest grid to get a good starting point.
+  PetscBool start;
+  ierr = PetscOptionsHasName(NULL, NULL, "-PRINVIT_Static_Start", &start); CHKERRQ(ierr);
+  if (start) {
+    PetscInt first;
+    PetscScalar *p_vec;
+    ierr = MatGetOwnershipRange(A[0], &first, NULL); CHKERRQ(ierr);
+    for (int ii = j; ii < jmin; ii++) {
+      ierr = VecGetArray(V[ii], &p_vec); CHKERRQ(ierr);
+      for (int jj = 0; jj < nlocal; jj++)
+        p_vec[jj] = pow(jj+first+1,ii);
+      ierr = VecRestoreArray(V[ii], &p_vec); CHKERRQ(ierr);
+    }
+    j = std::max(jmin, j);
+  }
+  else {  
+    PetscRandom random;
+    ierr = PetscRandomCreate(comm, &random); CHKERRQ(ierr);
+    Vec Temp;
+    ierr = VecDuplicate(V[0], &Temp); CHKERRQ(ierr);
+    for (int ii = j; ii < jmin; ii++) {
+      ierr = VecSetRandom(Temp, random); CHKERRQ(ierr);
+      ierr = MatMult(this->A[0], Temp, V[ii]); CHKERRQ(ierr);
+      ierr = Remove_NullSpace(this->A[0], V[ii]); CHKERRQ(ierr);
+    }
+    ierr = PetscRandomDestroy(&random);
+    ierr = VecDestroy(&Temp); CHKERRQ(ierr);
+    j = std::max(jmin, j);
+  }
+
   return 0;
 }
 
@@ -74,16 +299,16 @@ PetscErrorCode PRINVIT::Compute()
   ierr = Compute_Init(); CHKERRQ(ierr);
 
   // Initialize search subspace with interpolated coarse eigenvectors
-  PetscInt j = 0;
-  ierr = Initialize_V(j); CHKERRQ(ierr);
-  nev_conv = 0;
+  ierr = Initialize_V(); CHKERRQ(ierr);
 
   // Orthonormalize search space vectors
   ierr = MatMult(B[0], V[0], TempVecs[0]); CHKERRQ(ierr);
   ierr = VecDot(V[0], TempVecs[0], TempScal.data()); CHKERRQ(ierr);
   ierr = VecScale(V[0], 1.0/sqrt(TempScal(0))); CHKERRQ(ierr);
   for (int ii = 1; ii < j; ii++) {
-    ierr = Icgsm(V, B[0], V[ii], TempScal(0), ii); CHKERRQ(ierr);
+    ierr = Icgsm(V, B[0], V[ii], TempScal(0), ii); 
+    if (ierr != 0)
+      j = ii;
     ierr = VecScale(V[ii], 1.0/TempScal(0)); CHKERRQ(ierr);
   }
 
@@ -258,6 +483,43 @@ PetscErrorCode PRINVIT::Compute()
   it--;
 
   ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
+  return 0;
+}
+
+/********************************************************************
+ * Clean up after the compute phase
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode PRINVIT::Compute_Clean()
+{
+  PetscErrorCode ierr = 0;
+  if (this->verbose >= 3)
+    ierr = PetscFPrintf(comm, output, "Cleaning up\n"); CHKERRQ(ierr);
+
+  // Extract and sort converged eigenpairs from Q and lambda
+  lambda.conservativeResize(nev_conv);
+  MatrixXPS empty(0,0);
+  Eigen::ArrayXi order = Sorteig(empty, lambda);
+  if (nev_conv > 0) {
+    ierr = VecDuplicateVecs(Q[0][0], nev_conv, &phi); CHKERRQ(ierr);
+  }
+  // Fill in eigenvectors and add Q to the search space as memory size
+  // allows in case we want to restart
+  PetscInt start = std::min(j, jmax-nev_conv);
+  PetscInt end = std::min(jmax, nev_conv);
+  for (PetscInt ii = 0; ii < nev_conv; ii++) {
+    ierr = VecCopy(Q[0][order(ii)], phi[ii]); CHKERRQ(ierr);
+    if (ii < end) {
+      ierr = VecCopy(Q[0][order(ii)], V[ii+start]); CHKERRQ(ierr);
+    }
+    j = std::min(jmax, j+nev_conv-1);
+  }
+
+  // Destroy eigenvectors storage space at each level
+  ierr = Destroy_Q(); CHKERRQ(ierr);
+
   return 0;
 }
 

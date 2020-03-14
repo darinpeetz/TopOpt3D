@@ -182,23 +182,30 @@ PetscErrorCode EigenPeetz::Set_Operators(Mat A, Mat B)
     ierr = PetscFPrintf(comm, output, "Setting operators\n"); CHKERRQ(ierr);
 
   if (this->A.size() > 0) {
-    ierr = MatDestroy(this->A.data()); CHKERRQ(ierr);
-    this->A[0] = A;
-    ierr = PetscObjectReference((PetscObject)A); CHKERRQ(ierr);
+    for (PetscInt i = 0; i < this->A.size(); i++) {
+      ierr = MatDestroy(this->A.data()+i); CHKERRQ(ierr);
+    }
+    this->A.resize(0);
   }
-  else {
-    this->A.push_back(A);
-    ierr = PetscObjectReference((PetscObject)A); CHKERRQ(ierr);
-  }
+
+  this->A.push_back(A);
+  ierr = PetscObjectReference((PetscObject)A); CHKERRQ(ierr);
   if (this->B.size() > 0) {
-    ierr = MatDestroy(this->B.data()); CHKERRQ(ierr);
-    this->B[0] = B;
-    ierr = PetscObjectReference((PetscObject)B); CHKERRQ(ierr);
+    for (PetscInt i = 0; i < this->B.size(); i++) {
+      ierr = MatDestroy(this->B.data()+i); CHKERRQ(ierr);
+    }
+    this->B.resize(0);
   }
-  else {
-    this->B.push_back(B);
-    ierr = PetscObjectReference((PetscObject)B); CHKERRQ(ierr);
+  this->B.push_back(B);
+  ierr = PetscObjectReference((PetscObject)B); CHKERRQ(ierr);
+
+  PetscInt An, Bn;
+  ierr = MatGetSize(A, NULL, &An); CHKERRQ(ierr);
+  ierr = MatGetSize(B, NULL, &Bn); CHKERRQ(ierr);
+  if (An != Bn) {
+    SETERRQ(comm, PETSC_ERR_ARG_SIZ, "Matrix sizes are not equal");
   }
+  this->n = An;
 
   return 0;
 }
@@ -387,7 +394,8 @@ PetscErrorCode EigenPeetz::Icgsm(Vec *Q, Mat M, Vec u, PetscScalar &r, PetscInt 
     it++; r0 = r;
   }
   if (r <= alpha*r0) {
-    SETERRQ(comm, PETSC_ERR_FP, "Breakdown in ICGSM routine");
+    ierr = PetscFPrintf(this->comm, this->output, "Breakdown in ICGSM routine\n");
+    return -1;
   }
 
   ierr = VecDestroy(&um); CHKERRQ(ierr);
