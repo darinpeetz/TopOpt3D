@@ -11,6 +11,8 @@ typedef Eigen::Map< Eigen::Matrix<PetscScalar, 1, -1>, Eigen::Unaligned,
                     Eigen::InnerStride<-1> > Bmap;
 typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 
+std::string MGTypes[4] = {"MULTIPLICATIVE", "ADDITIVE", "FULL", "KAKSKADE"};
+
 /********************************************************************
  * Set up the stiffness matrix and solver context
  * 
@@ -207,12 +209,11 @@ PetscErrorCode TopOpt::FEInitialize()
   // Set up geometric multigrid hierarchy if desired
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
   if (!strcmp(pctype, PCMG)) {
-    PetscInt nlevels = this->PR.size()+1;
-    ierr = PCMGSetLevels(pc, nlevels, NULL); CHKERRQ(ierr);
-    ierr = PCMGSetType(pc, PC_MG_MULTIPLICATIVE); CHKERRQ(ierr);
+    PetscInt levels;
+    ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
     ierr = PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH); CHKERRQ(ierr);
-    for (int i = 1; i < nlevels; i++) {
-      ierr = PCMGSetInterpolation(pc, i, this->PR[nlevels-i-1]); CHKERRQ(ierr); }
+    for (int i = 1; i < levels; i++) {
+      ierr = PCMGSetInterpolation(pc, i, this->PR[levels-i-1]); CHKERRQ(ierr); }
   }
 
   // Finish ghosting force vector
@@ -294,6 +295,15 @@ PetscErrorCode TopOpt::FEAssemble()
  * 
  * @return ierr: PetscErrorCode
  * 
+ * To set smoothers at runtime, use -kuf_mg_levels_ksp_type <type> and
+ * -kuf_mg_levels_pc_type <type>. Options for those smoothers are set
+ * like -kuf_mg_levels_ksp_richardson_scale <scale>, for example.
+ * Coarse grid options are set with -kuf_mg_coarse_ksp_type and
+ * -kuf_mg_coarse_pc_type. Options can be verified with -kuf_ksp_view,
+ * or more concisely by setting verbosity >2 in input file or from 
+ * command line. If using bjacobi as coarse grid preconditioner
+ * (recommended), set block solver with -kuf_mg_coarse_sub_pc_type <type>.
+ * 
  *******************************************************************/
 PetscErrorCode TopOpt::FESolve()
 {
@@ -321,83 +331,57 @@ PetscErrorCode TopOpt::FESolve()
     ierr = PCGAMGSetThreshold(pc, &threshold, 1); CHKERRQ(ierr);
   }
 
-  // Select the smoothers we're using
+  // Print out the multigrid information
   if (!strcmp(pctype,PCGAMG) || !strcmp(pctype,PCMG)) {
     ierr = PCSetUp(pc); CHKERRQ(ierr);
     PetscInt levels;
     KSP smooth_ksp; PC smooth_pc; KSPType smooth_ksp_type; PCType smooth_pc_type;
     ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
 
-    // Perform a direct solve on the coarse level for GMG (should be on one process)
-    if (!strcmp(pctype,PCMG)) {
-      KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
+    // Coarse grid
+    if (this->verbose >= 2) {
       ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
-      ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
-      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-      ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
-      ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
-      ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
-      ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
-      if (blocks != 1) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_PLIB,
-                                "blocks on this process, %D, is not one", blocks);
-      ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
-      ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
-      ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
-      ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT,
-        PETSC_DEFAULT, 1); CHKERRQ(ierr);
-      ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
-      ierr = PCSetUp(sub_pc); CHKERRQ(ierr);
-    }
-    else if (!strcmp(pctype,PCGAMG) && this->nFixDof == 0) {
-      Mat A; PetscInt coarseSize;
-      ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
-      ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
-      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-      ierr = PCGetOperators(smooth_pc, &A, NULL); CHKERRQ(ierr);
-      ierr = MatGetSize(A, &coarseSize, NULL); CHKERRQ(ierr);
-      if (coarseSize < 100) { // This is an expensive solver but good if no Dirichlet BC
-        ierr = PCSetType(smooth_pc, PCSHELL); CHKERRQ(ierr);
-        ierr = CreateEigenShell(smooth_pc); CHKERRQ(ierr);
-        ierr = PCShellSetSetUp(smooth_pc, EigenShellSetUp); CHKERRQ(ierr);
-        ierr = PCShellSetApply(smooth_pc, EigenShellApply); CHKERRQ(ierr);
-        ierr = PCShellSetDestroy(smooth_pc, EigenShellDestroy); CHKERRQ(ierr);
-        ierr = PCShellSetName(smooth_pc, "Eigendecomposition Inverse"); CHKERRQ(ierr);
-        ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
-      }
-    }
-
-    // Verify that the requested smoothers are being used
-    ierr = PCMGGetSmoother(pc, levels-1, &smooth_ksp); CHKERRQ(ierr);
-    ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
-    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-    ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
-    if (strcmp(this->smoother.c_str(), smooth_ksp_type)) { // Specific smoother selected
-      if (!strcmp(this->smoother.c_str(), KSPRICHARDSON)) { // Weighted jacobi
-        for (int i = 1; i < levels; i++) {
-          ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-          ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-          ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-          ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-          ierr = PCSetType(smooth_pc, PCPBJACOBI); CHKERRQ(ierr);
-        }
-      }
-      else if (!strcmp(this->smoother.c_str(), KSPCHEBYSHEV)) { // Chebyshev with SOR
-        for (int i = 1; i < levels; i++) {
-          ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-          ierr = KSPSetType(smooth_ksp, KSPCHEBYSHEV); CHKERRQ(ierr);
-          ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-          ierr = PCSetType(smooth_pc, PCSOR); CHKERRQ(ierr);
-        }
-      }
-      ierr = PCMGGetSmoother(pc, levels-1, &smooth_ksp); CHKERRQ(ierr);
       ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
       ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
       ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
+      ierr = PetscFPrintf(comm, output, "Multigrid coarse grid is using %s "
+                          "with %s preconditioning\n",
+                          smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+      PetscBool same;
+      ierr = PetscObjectTypeCompare((PetscObject) smooth_pc, PCBJACOBI, &same); CHKERRQ(ierr);
+      if (same == PETSC_TRUE) {
+        KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
+        ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+        ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+        ierr = KSPGetType(sub_ksp[0], &smooth_ksp_type); CHKERRQ(ierr);
+        ierr = PCGetType(sub_pc, &smooth_pc_type); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "Individual blocks are using %s "
+                            "with %s preconditioning\n",
+                            smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+      }
     }
-    if (this->verbose >= 2) {
-      PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
-                 "smoothing with %s preconditioning\n",
-                  smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+    // Concise smoother information
+    if (this->verbose == 2) {
+      ierr = PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
+                          "smoothing with %s preconditioning\n",
+                          smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+    }
+    // Verbose smoother information
+    if (this->verbose > 2) {
+      PCMGType mg_type;
+      ierr = PCMGGetType(pc, &mg_type); CHKERRQ(ierr);
+      ierr = PetscFPrintf(comm, output, "Multigrid is cycling through levels using"
+                          " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
+      for (PetscInt i = 1; i < levels; i++) {
+          ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+          ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
+          ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+          ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
+          ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
+                              "smoothing with %s preconditioning\n", i,
+                              smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+
+      }
     }
   }
 
