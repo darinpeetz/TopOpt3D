@@ -245,7 +245,7 @@ public:
                             PetscInt mg_levels, PetscInt min_size);
   PetscErrorCode Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
                                        ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                                       ArrayXPI *cList, PetscInt mg_levels);
+                                       ArrayXPI *cList, PetscInt &mg_levels);
   PetscErrorCode Create_Interpolation(ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
                                       ArrayXPI &I, ArrayXPI &J, ArrayXPS &K);
   PetscErrorCode Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,

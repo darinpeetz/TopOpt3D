@@ -746,153 +746,150 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   ArrayXPI number = ArrayXPI::Zero(nprocs);
   // Setting the range of local elements amongst all relevant elements
   PetscInt start, finish;
-  if (myid == 0)
-  {
+  if (myid == 0) {
     start = 0; finish = nLocElem;
     newElemNumber.setZero(nLocElem + padding);
   }
-  else if (myid == nprocs-1)
-  {
+  else if (myid == nprocs-1) {
     start = padding; finish = nLocElem+padding;
     newElemNumber.setZero(nLocElem + padding);
   }
-  else
-  {
+  else {
     start = padding; finish = nLocElem+padding;
     newElemNumber.setZero(nLocElem + 2*padding);
   }
 
-  for (PetscInt el = 0; el < nLocElem; el++)
-  {
-    if (elemValidity(el))
-    {
+  for (PetscInt el = 0; el < nLocElem; el++) {
+    if (elemValidity(el)) {
       newElemNumber(el+start) = ++number(myid);
     }
   }
 
-  // Share how many are stored locally on this process
-  MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, number.data(), 1, MPI_PETSCINT, comm);
-  // Calculate first number on this process (first process starts at 1)
-  if (myid > 0)
-  {
-    newElemNumber.segment(padding, nLocElem) +=
-       number.segment(0, myid).sum()*
-       (newElemNumber.segment(padding, nLocElem)>0).cast<PetscInt>();
-  }
-
-  /// Send and receive new numbers of edge elements to adjacent processes
-  MPI_Request sendReq1 = MPI_REQUEST_NULL, sendReq2 = MPI_REQUEST_NULL,
-              recReq1 = MPI_REQUEST_NULL, recReq2 = MPI_REQUEST_NULL;
-  int sR1 = true, sR2 = true, rR1 = true, rR2 = true;
-  if (nLocElem > 0)
-  {
-    if (myid > 0 && myid != nprocs-1)
+  if (this->nprocs > 1) {
+    // Share how many are stored locally on this process
+    MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, number.data(), 1, MPI_PETSCINT, comm);
+    // Calculate first number on this process (first process starts at 1)
+    if (myid > 0)
     {
-      // Upward send
-      MPI_Isend(newElemNumber.data()+nLocElem, padding, MPI_PETSCINT,
-                myid+1, 0, comm, &sendReq1);
-      // Downward send
-      MPI_Isend(newElemNumber.data()+padding, padding, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      // Receive from below
-      MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-      // Receive from above
-      MPI_Irecv(newElemNumber.data()+nLocElem+padding, padding, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-    }
-    else if (myid == 0)
-    {
-      // Upward send
-      MPI_Isend(newElemNumber.data()+nLocElem-padding, padding, MPI_PETSCINT,
-                myid+1, 0, comm, &sendReq1);
-      // Receive from above
-      MPI_Irecv(newElemNumber.data()+nLocElem, padding, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-    }
-    else
-    {
-      // Downward send
-      MPI_Isend(newElemNumber.data()+padding, padding, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      // Receive from below
-      MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
+      newElemNumber.segment(padding, nLocElem) +=
+        number.segment(0, myid).sum()*
+        (newElemNumber.segment(padding, nLocElem)>0).cast<PetscInt>();
     }
 
-    // Terminate communications before advancing
-    do {
-      MPI_Test(&sendReq1, &sR1, MPI_STATUS_IGNORE);
-      MPI_Test(&sendReq2, &sR2, MPI_STATUS_IGNORE);
-      MPI_Test(&recReq1, &rR1, MPI_STATUS_IGNORE);
-      MPI_Test(&recReq2, &rR2, MPI_STATUS_IGNORE);
-    } while (!(sR1 && sR2 && rR1 && rR2));
-  }
-  else
-  {
-    // this process currently owns zero elements - pass information along
-    ArrayXPI zeros = ArrayXPI::Zero(padding);
-    if (myid == 0)
+    /// Send and receive new numbers of edge elements to adjacent processes
+    MPI_Request sendReq1 = MPI_REQUEST_NULL, sendReq2 = MPI_REQUEST_NULL,
+                recReq1 = MPI_REQUEST_NULL, recReq2 = MPI_REQUEST_NULL;
+    int sR1 = true, sR2 = true, rR1 = true, rR2 = true;
+    if (nLocElem > 0)
     {
-      rR1 = 1; sR1 = 0; rR2 = 0; sR2 = 1;
-      // Upward send
-      MPI_Isend(zeros.data(), padding, MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-      // Receive from above
-      MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-    }
-    else if (myid == nprocs-1)
-    {
-      rR2 = 1; sR2 = 0; rR1 = 0; sR1 = 1;
-      // Downward send
-      MPI_Isend(zeros.data(), padding, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      // Receive from below
-      MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-    }
-    else
-    {
-      rR2 = 0; sR2 = 0; rR1 = 0; sR1 = 0;
-      // Receive from above
-      MPI_Irecv(newElemNumber.data()+padding, padding, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-      // Receive from below
-      MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-    }
-    do {
-      if (rR1 == 0)
+      if (myid > 0 && myid != nprocs-1)
       {
-        MPI_Test(&recReq1, &rR1, MPI_STATUS_IGNORE);
-        if (rR1 == 1) // Just got the message from below
-        {
-          // Upward send
-          MPI_Isend(newElemNumber.data(), padding,
-                    MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-          sR1 = 0;
-        }
+        // Upward send
+        MPI_Isend(newElemNumber.data()+nLocElem, padding, MPI_PETSCINT,
+                  myid+1, 0, comm, &sendReq1);
+        // Downward send
+        MPI_Isend(newElemNumber.data()+padding, padding, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        // Receive from below
+        MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+        // Receive from above
+        MPI_Irecv(newElemNumber.data()+nLocElem+padding, padding, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
       }
-      else if (sR1 == 0)
+      else if (myid == 0)
       {
+        // Upward send
+        MPI_Isend(newElemNumber.data()+nLocElem-padding, padding, MPI_PETSCINT,
+                  myid+1, 0, comm, &sendReq1);
+        // Receive from above
+        MPI_Irecv(newElemNumber.data()+nLocElem, padding, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+      }
+      else
+      {
+        // Downward send
+        MPI_Isend(newElemNumber.data()+padding, padding, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        // Receive from below
+        MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+      }
+
+      // Terminate communications before advancing
+      do {
         MPI_Test(&sendReq1, &sR1, MPI_STATUS_IGNORE);
-      }
-      if (rR2 == 0)
-      {
-        MPI_Test(&recReq2, &rR2, MPI_STATUS_IGNORE);
-        if (rR2 == 1) // Just got the message from above
-        {
-          // Downward send
-          MPI_Isend(newElemNumber.data()+padding, padding,
-                    MPI_PETSCINT, myid-1, 1, comm, &sendReq2);
-          sR2 = 0;
-        }
-      }
-      else if (sR2 == 0)
-      {
         MPI_Test(&sendReq2, &sR2, MPI_STATUS_IGNORE);
+        MPI_Test(&recReq1, &rR1, MPI_STATUS_IGNORE);
+        MPI_Test(&recReq2, &rR2, MPI_STATUS_IGNORE);
+      } while (!(sR1 && sR2 && rR1 && rR2));
+    }
+    else
+    {
+      // this process currently owns zero elements - pass information along
+      ArrayXPI zeros = ArrayXPI::Zero(padding);
+      if (myid == 0)
+      {
+        rR1 = 1; sR1 = 0; rR2 = 0; sR2 = 1;
+        // Upward send
+        MPI_Isend(zeros.data(), padding, MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+        // Receive from above
+        MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
       }
-    } while (!(sR1 && sR2 && rR1 && rR2));
+      else if (myid == nprocs-1)
+      {
+        rR2 = 1; sR2 = 0; rR1 = 0; sR1 = 1;
+        // Downward send
+        MPI_Isend(zeros.data(), padding, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        // Receive from below
+        MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+      }
+      else
+      {
+        rR2 = 0; sR2 = 0; rR1 = 0; sR1 = 0;
+        // Receive from above
+        MPI_Irecv(newElemNumber.data()+padding, padding, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+        // Receive from below
+        MPI_Irecv(newElemNumber.data(), padding, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+      }
+      do {
+        if (rR1 == 0)
+        {
+          MPI_Test(&recReq1, &rR1, MPI_STATUS_IGNORE);
+          if (rR1 == 1) // Just got the message from below
+          {
+            // Upward send
+            MPI_Isend(newElemNumber.data(), padding,
+                      MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+            sR1 = 0;
+          }
+        }
+        else if (sR1 == 0)
+        {
+          MPI_Test(&sendReq1, &sR1, MPI_STATUS_IGNORE);
+        }
+        if (rR2 == 0)
+        {
+          MPI_Test(&recReq2, &rR2, MPI_STATUS_IGNORE);
+          if (rR2 == 1) // Just got the message from above
+          {
+            // Downward send
+            MPI_Isend(newElemNumber.data()+padding, padding,
+                      MPI_PETSCINT, myid-1, 1, comm, &sendReq2);
+            sR2 = 0;
+          }
+        }
+        else if (sR2 == 0)
+        {
+          MPI_Test(&sendReq2, &sR2, MPI_STATUS_IGNORE);
+        }
+      } while (!(sR1 && sR2 && rR1 && rR2));
+    }
   }
 
   /// Prepare to check validity of nodes
@@ -924,166 +921,170 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
     }
   }
 
-  // Container to use for communications with adjacent processes
-  ArrayXPI Receptacle = ArrayXPI::Zero(4*nInterfaceNodes);
-  // Share validity of edge nodes if this process has any, pass through otherwise
-  MPI_Status sendStat1, sendStat2, recStat1, recStat2;
-  if (nLocNode > 0)
-  {
-    if (myid > 0 && myid != nprocs-1)
+  if (this->nprocs > 1) {
+    /// Send and receive new numbers of edge nodes to adjacent processes
+    MPI_Request sendReq1 = MPI_REQUEST_NULL, sendReq2 = MPI_REQUEST_NULL,
+                recReq1 = MPI_REQUEST_NULL, recReq2 = MPI_REQUEST_NULL;
+    int sR1 = true, sR2 = true, rR1 = true, rR2 = true;
+    // Container to use for communications with adjacent processes
+    ArrayXPI Receptacle = ArrayXPI::Zero(4*nInterfaceNodes);
+    // Share validity of edge nodes if this process has any, pass through otherwise
+    MPI_Status sendStat1, sendStat2, recStat1, recStat2;
+    if (nLocNode > 0)
     {
-      // Upward send
-      MPI_Isend(newNodeNumber.data()+nLocNode, 2*nInterfaceNodes,
-                MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-      sR1 = 0;
-      // Downward send
-      MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      sR2 = 0;
-      // Receive from below
-      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-      rR1 = 0;
-      // Receive from above
-      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-      rR2 = 0;
-    }
-    else if (myid == 0)
-    {
-      // Upward send
-      MPI_Isend(newNodeNumber.data()+nLocNode-nInterfaceNodes, 2*nInterfaceNodes,
-                MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-      sR1 = 0;
-      // Receive from above
-      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-      rR2 = 0;
+      if (myid > 0 && myid != nprocs-1)
+      {
+        // Upward send
+        MPI_Isend(newNodeNumber.data()+nLocNode, 2*nInterfaceNodes,
+                  MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+        sR1 = 0;
+        // Downward send
+        MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        sR2 = 0;
+        // Receive from below
+        MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+        rR1 = 0;
+        // Receive from above
+        MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+        rR2 = 0;
+      }
+      else if (myid == 0)
+      {
+        // Upward send
+        MPI_Isend(newNodeNumber.data()+nLocNode-nInterfaceNodes, 2*nInterfaceNodes,
+                  MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+        sR1 = 0;
+        // Receive from above
+        MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+        rR2 = 0;
 
-    }
-    else // last process
-    {
-      // Downward send
-      MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      sR2 = 0;
-      // Receive from below
-      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-      rR1 = 0;
-    }
+      }
+      else // last process
+      {
+        // Downward send
+        MPI_Isend(newNodeNumber.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        sR2 = 0;
+        // Receive from below
+        MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+        rR1 = 0;
+      }
 
-    do {
-      if (sR1 == 0)
-      {
-        MPI_Test(&sendReq1, &sR1, &sendStat1);
-      }
-      if (sR2 == 0)
-      {
-        MPI_Test(&sendReq2, &sR2, &sendStat2);
-      }
-      if (rR1 == 0)
-      {
-        MPI_Test(&recReq1, &rR1, &recStat1);
-        if (rR1 == 1) // Just got the message from below
+      do {
+        if (sR1 == 0)
         {
-          // Combine indicators from both processes
-          newNodeNumber.segment(0, 2*nInterfaceNodes) =
-            newNodeNumber.segment(0, 2*nInterfaceNodes).max(
-            Receptacle.segment(0, 2*nInterfaceNodes) );
+          MPI_Test(&sendReq1, &sR1, &sendStat1);
         }
-      }
-      if (rR2 == 0)
-      {
-        MPI_Test(&recReq2, &rR2, &recStat2);
-        if (rR2 == 1) // Just got the message from above
+        if (sR2 == 0)
         {
-          // Combine indicators from both processes
-          newNodeNumber.segment(newNodeNumber.size()-2*nInterfaceNodes,
-                                2*nInterfaceNodes) = newNodeNumber.segment
-            (newNodeNumber.size()-2*nInterfaceNodes, 2*nInterfaceNodes).max
-            (Receptacle.segment(2*nInterfaceNodes, 2*nInterfaceNodes) );
+          MPI_Test(&sendReq2, &sR2, &sendStat2);
         }
-      }
-    } while (!(sR1 && sR2 && rR1 && rR2));
-  }
-  else
-  {
-    // this process owns no nodes currently - receive from adjacent
-    // processes and pass through
-    ArrayXPI zeros = ArrayXPI::Zero(2*nInterfaceNodes);
-    if (myid == 0)
-    {
-      rR1 = 1; sR1 = 0; rR2 = 0; sR2 = 1;
-      // Upward send
-      MPI_Isend(zeros.data(), 2*nInterfaceNodes,
-                MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-      // Receive from above
-      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-    }
-    else if (myid == nprocs-1)
-    {
-      rR2 = 1; sR2 = 0; rR1 = 0; sR1 = 1;
-      // Downward send
-      MPI_Isend(zeros.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 1, comm, &sendReq2);
-      // Receive from below
-      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
+        if (rR1 == 0)
+        {
+          MPI_Test(&recReq1, &rR1, &recStat1);
+          if (rR1 == 1) // Just got the message from below
+          {
+            // Combine indicators from both processes
+            newNodeNumber.segment(0, 2*nInterfaceNodes) =
+              newNodeNumber.segment(0, 2*nInterfaceNodes).max(
+              Receptacle.segment(0, 2*nInterfaceNodes) );
+          }
+        }
+        if (rR2 == 0)
+        {
+          MPI_Test(&recReq2, &rR2, &recStat2);
+          if (rR2 == 1) // Just got the message from above
+          {
+            // Combine indicators from both processes
+            newNodeNumber.segment(newNodeNumber.size()-2*nInterfaceNodes,
+                                  2*nInterfaceNodes) = newNodeNumber.segment
+              (newNodeNumber.size()-2*nInterfaceNodes, 2*nInterfaceNodes).max
+              (Receptacle.segment(2*nInterfaceNodes, 2*nInterfaceNodes) );
+          }
+        }
+      } while (!(sR1 && sR2 && rR1 && rR2));
     }
     else
     {
-      rR2 = 0; sR2 = 0; rR1 = 0; sR1 = 0;
-      // Receive from above
-      MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
-                myid+1, 1, comm, &recReq2);
-      // Receive from below
-      MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
-                myid-1, 0, comm, &recReq1);
-    }
+      // this process owns no nodes currently - receive from adjacent
+      // processes and pass through
+      ArrayXPI zeros = ArrayXPI::Zero(2*nInterfaceNodes);
+      if (myid == 0)
+      {
+        rR1 = 1; sR1 = 0; rR2 = 0; sR2 = 1;
+        // Upward send
+        MPI_Isend(zeros.data(), 2*nInterfaceNodes,
+                  MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+        // Receive from above
+        MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+      }
+      else if (myid == nprocs-1)
+      {
+        rR2 = 1; sR2 = 0; rR1 = 0; sR1 = 1;
+        // Downward send
+        MPI_Isend(zeros.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 1, comm, &sendReq2);
+        // Receive from below
+        MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+      }
+      else
+      {
+        rR2 = 0; sR2 = 0; rR1 = 0; sR1 = 0;
+        // Receive from above
+        MPI_Irecv(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid+1, 1, comm, &recReq2);
+        // Receive from below
+        MPI_Irecv(Receptacle.data(), 2*nInterfaceNodes, MPI_PETSCINT,
+                  myid-1, 0, comm, &recReq1);
+      }
 
-    do {
-      if (rR1 == 0)
-      {
-        MPI_Test(&recReq1, &rR1, &recStat1);
-        if (rR1 == 1) // Just got the message from below
+      do {
+        if (rR1 == 0)
         {
-          // Upward send
-          MPI_Isend(Receptacle.data(), 2*nInterfaceNodes,
-                    MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
-          sR1 = 0;
+          MPI_Test(&recReq1, &rR1, &recStat1);
+          if (rR1 == 1) // Just got the message from below
+          {
+            // Upward send
+            MPI_Isend(Receptacle.data(), 2*nInterfaceNodes,
+                      MPI_PETSCINT, myid+1, 0, comm, &sendReq1);
+            sR1 = 0;
+          }
         }
-      }
-      else if (sR1 == 0)
-      {
-        MPI_Test(&sendReq1, &sR1, &sendStat1);
-      }
-      if (rR2 == 0)
-      {
-        MPI_Test(&recReq2, &rR2, &recStat2);
-        if (rR2 == 1) // Just got the message from above
+        else if (sR1 == 0)
         {
-          // Downward send
-          MPI_Isend(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes,
-                    MPI_PETSCINT, myid-1, 1, comm, &sendReq2);
-          sR2 = 0;
+          MPI_Test(&sendReq1, &sR1, &sendStat1);
         }
-      }
-      else if (sR2 == 0)
-      {
-        MPI_Test(&sendReq2, &sR2, &sendStat2);
-      }
-    } while (!(sR1 && sR2 && rR1 && rR2));
+        if (rR2 == 0)
+        {
+          MPI_Test(&recReq2, &rR2, &recStat2);
+          if (rR2 == 1) // Just got the message from above
+          {
+            // Downward send
+            MPI_Isend(Receptacle.data()+2*nInterfaceNodes, 2*nInterfaceNodes,
+                      MPI_PETSCINT, myid-1, 1, comm, &sendReq2);
+            sR2 = 0;
+          }
+        }
+        else if (sR2 == 0)
+        {
+          MPI_Test(&sendReq2, &sR2, &sendStat2);
+        }
+      } while (!(sR1 && sR2 && rR1 && rR2));
+    }
   }
 
   /// Validity of all nodes and elements has been determined
   /// Renumber local nodes
   number(myid) = 0;
-  for (PetscInt nd = nddist(myid)-start; nd < nddist(myid+1)-start; nd++)
-  {
-    if (newNodeNumber(nd) > 0)
-    {
+  for (PetscInt nd = nddist(myid)-start; nd < nddist(myid+1)-start; nd++) {
+    if (newNodeNumber(nd) > 0) {
       newNodeNumber(nd) = ++number(myid);
     }
   }
@@ -1092,19 +1093,15 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
 
   /// Renumber nonlocal nodes
   // Nodes on higher-numbered processes
-  for (PetscInt nd = nddist(myid+1)-start; nd < finish-start; nd++)
-  {
-    if (newNodeNumber(nd) > 0)
-    {
+  for (PetscInt nd = nddist(myid+1)-start; nd < finish-start; nd++) {
+    if (newNodeNumber(nd) > 0) {
       newNodeNumber(nd) = ++number(myid);
     }
   }
   number(myid) = 0;
   // Nodes on lower-numbered processes
-  for (PetscInt nd = nddist(myid)-start-1; nd >= 0; nd--)
-  {
-    if (newNodeNumber(nd) > 0)
-    {
+  for (PetscInt nd = nddist(myid)-start-1; nd >= 0; nd--) {
+    if (newNodeNumber(nd) > 0) {
       newNodeNumber(nd) = --number(myid);
     }
   }
@@ -1122,10 +1119,8 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   EigLab::RemoveSlices(element, newElemNumber, 1);
 
   // Reassign node numbers to remaining Elements
-  for (int el = 0; el < element.rows(); el++)
-  {
-    for (int nd = 0; nd < element.cols(); nd++)
-    {
+  for (int el = 0; el < element.rows(); el++) {
+    for (int nd = 0; nd < element.cols(); nd++) {
       PetscInt newNum = newNodeNumber(element(el,nd)-start);
       if (newNum >= number(myid))
         element(el,nd) = newNum-1;

@@ -41,7 +41,7 @@ int main(int argc, char **args)
   double Rmin=1.5, Rmax=3;
 
   bool Normalization = false, Reorder_Mesh = true;
-  PetscInt mg_levels = 2, min_size = -1;
+  PetscInt mg_levels = 20, min_size = -1;
   ierr = topOpt->Def_Param(optmma, Dimensions, Nel, Rmin, Rmax, Normalization,
                     Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
   mg_levels = std::max(mg_levels, 2);

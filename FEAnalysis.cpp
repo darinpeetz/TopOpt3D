@@ -209,11 +209,11 @@ PetscErrorCode TopOpt::FEInitialize()
   // Set up geometric multigrid hierarchy if desired
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
   if (!strcmp(pctype, PCMG)) {
-    PetscInt levels;
-    ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
+    ierr = PCMGSetLevels(pc, this->PR.size()+1, NULL); CHKERRQ(ierr);
     ierr = PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH); CHKERRQ(ierr);
-    for (int i = 1; i < levels; i++) {
-      ierr = PCMGSetInterpolation(pc, i, this->PR[levels-i-1]); CHKERRQ(ierr); }
+    for (int i = 1; i <= this->PR.size(); i++) {
+      ierr = PCMGSetInterpolation(pc, i, this->PR[this->PR.size()-i]); CHKERRQ(ierr);
+    }
   }
 
   // Finish ghosting force vector

@@ -28,10 +28,13 @@ typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
  * @return ierr: PetscErrorCode
  * 
  *******************************************************************/
-int TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
-                                  ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                                  ArrayXPI *cList, PetscInt mg_levels)
+PetscErrorCode TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last,
+                                             ArrayXPI Nel, ArrayXPI *I,
+                                             ArrayXPI *J, ArrayXPS *K,
+                                             ArrayXPI *cList, PetscInt &mg_levels)
 {
+  PetscErrorCode ierr = 0;
+
   // Number of nodes in each direction on current grid (Nf), and node
   // breakdown on this process (firstf and lastf)
   ArrayXPI Nf = Nel;
@@ -47,12 +50,28 @@ int TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
   ArrayXPI yBase = ArrayXPI::LinSpaced(Nf(1), 0, Nf(1)-1);
   ArrayXPI zBase = ArrayXPI::LinSpaced(Nf(2), 0, Nf(2)-1);
 
+  // Check if hierarchy info was overriden at command line
+  PetscBool levelSet, coarseEQSet;
+  PetscInt levels=20, coarseEQ;
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_levels", &levels, &levelSet);
+    CHKERRQ(ierr);
+  if (levelSet == PETSC_TRUE) {
+    mg_levels = levels;
+  }
+  else {
+    ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_coarse_eq_limit", 
+                              &coarseEQ, &coarseEQSet); CHKERRQ(ierr);
+    if (coarseEQSet == PETSC_FALSE) {
+      coarseEQ = 1;
+    }
+  }
+
   for (int i = 0; i < mg_levels-1; i++) {  
     // Create the interpolation triplets for this restriction
-
-    PetscErrorCode ierr = Create_Interpolation(firstf, lastf,
-                                               Nf, I[i], J[i], K[i]);
-    CHKERRQ(ierr);
+    ierr = Create_Interpolation(firstf, lastf, Nf, I[i], J[i], K[i]);
+      CHKERRQ(ierr);
+    if (this->numDims * Nf.prod() <= coarseEQ) // (Nf is size of level i+1)
+      mg_levels = i + 2;
     // Setup the node breakdown on the new coarse grid
     firstf = (firstf+1)/2;
     lastf.segment(0,numDims) = (lastf.segment(0,numDims)+1)/2;
@@ -106,8 +125,9 @@ int TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
  * @return ierr: PetscErrorCode
  * 
  *******************************************************************/
-int TopOpt::Create_Interpolation (ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
-                                  ArrayXPI &I, ArrayXPI &J, ArrayXPS &K)
+PetscErrorCode TopOpt::Create_Interpolation(ArrayXPI &first, ArrayXPI &last,
+                                            ArrayXPI &Nf, ArrayXPI &I,
+                                            ArrayXPI &J, ArrayXPS &K)
 {
   ArrayXPI Nc = (Nf+1)/2;
   if ((Nf < last).any())
@@ -166,9 +186,9 @@ int TopOpt::Create_Interpolation (ArrayXPI &first, ArrayXPI &last, ArrayXPI &Nf,
  * @return ierr: PetscErrorCode
  * 
  *******************************************************************/
-int TopOpt::Assemble_Interpolation (ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                                    ArrayXPI *cList, PetscInt mg_levels,
-                                    PetscInt min_size)
+int TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                   ArrayXPI *cList, PetscInt mg_levels,
+                                   PetscInt min_size)
 {
   PetscErrorCode ierr = 0;
   // Preallocation arrays
@@ -226,10 +246,6 @@ int TopOpt::Assemble_Interpolation (ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
     // Initialize preallocation arrays
     fill(onDiag, onDiag+gRows, 0);
     fill(offDiag, offDiag+gRows, 0);
-
-    // Set local row array
-    if (i > 0)
-      lRows = lCols;
 
     // Coarsest interpolator works a little different
     if (i == mg_levels-2) {
@@ -332,6 +348,9 @@ int TopOpt::Assemble_Interpolation (ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
     ierr = MatDiagonalScale(this->PR[i], rowSum, NULL); CHKERRQ(ierr);
     ierr = VecDestroy(&rowSum); CHKERRQ(ierr);
     ierr = VecDestroy(&Ones); CHKERRQ(ierr);
+
+    // Set local row array
+    lRows = lCols;
   }
   delete[] onDiag; delete[] offDiag;
 
