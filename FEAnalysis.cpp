@@ -338,6 +338,53 @@ PetscErrorCode TopOpt::FESolve()
     KSP smooth_ksp; PC smooth_pc; KSPType smooth_ksp_type; PCType smooth_pc_type;
     ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
 
+    // Better coarse solver defaults
+    char ign[100];
+    PetscInt ore = 100;
+    PetscBool set;
+    ierr = PetscOptionsGetString(NULL, NULL, "-kuf_mg_coarse_pc_type",
+                                 ign, ore, &set); CHKERRQ(ierr);
+    if (set == PETSC_TRUE) {
+      ierr = PetscFPrintf(this->comm, this->output, "Coarse solver overridden"
+                          " at command line\n"); CHKERRQ(ierr);
+    }
+    else if (!strcmp(pctype,PCMG)) {
+      KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
+      ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+      ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
+      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+      ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
+      ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+      ierr = KSPSetUp(smooth_ksp); CHKERRQ(ierr);
+      ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+      if (blocks != 1) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_PLIB,
+                                "blocks on this process, %D, is not one", blocks);
+      ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+      ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
+      ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
+      ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT,
+        PETSC_DEFAULT, 1); CHKERRQ(ierr);
+      ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
+      ierr = PCSetUp(sub_pc); CHKERRQ(ierr);
+    }
+    else if (!strcmp(pctype,PCGAMG) && this->nFixDof == 0) {
+      Mat A; PetscInt coarseSize;
+      ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+      ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
+      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+      ierr = PCGetOperators(smooth_pc, &A, NULL); CHKERRQ(ierr);
+      ierr = MatGetSize(A, &coarseSize, NULL); CHKERRQ(ierr);
+      if (coarseSize < 100) { // This is an expensive solver but good if no Dirichlet BC
+        ierr = PCSetType(smooth_pc, PCSHELL); CHKERRQ(ierr);
+        ierr = CreateEigenShell(smooth_pc); CHKERRQ(ierr);
+        ierr = PCShellSetSetUp(smooth_pc, EigenShellSetUp); CHKERRQ(ierr);
+        ierr = PCShellSetApply(smooth_pc, EigenShellApply); CHKERRQ(ierr);
+        ierr = PCShellSetDestroy(smooth_pc, EigenShellDestroy); CHKERRQ(ierr);
+        ierr = PCShellSetName(smooth_pc, "Eigendecomposition Inverse"); CHKERRQ(ierr);
+        ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+      }
+    }
+
     // Coarse grid
     if (this->verbose >= 2) {
       ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);

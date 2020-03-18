@@ -84,6 +84,13 @@ int main(int argc, char **args)
         topOpt->active(i) = false;
       }
     }
+
+    int active = topOpt->active.any();
+    ierr = MPI_Allreduce(MPI_IN_PLACE, &active, 1, MPI_INT,
+                         MPI_MAX, topOpt->comm); CHKERRQ(ierr);
+    if (active == 0) {
+      SETERRQ(topOpt->comm, PETSC_ERR_SUP, "No active design variables");
+    }
   }
 
   // Write out the mesh to file
