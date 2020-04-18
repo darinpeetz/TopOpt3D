@@ -69,8 +69,8 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
     SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open elements file");
   filesize = input.tellg();
   SetDimension(log2(filesize/sizeof(PetscInt)/elmdist(elmdist.size()-1)));
-  input.seekg(elmdist(myid)*pow(numDims,2)*sizeof(PetscInt));
-  element.resize(elmdist(myid+1)-elmdist(myid), pow(numDims,2));
+  input.seekg(elmdist(myid)*pow(2, numDims)*sizeof(PetscInt));
+  element.resize(elmdist(myid+1)-elmdist(myid), pow(2, numDims));
   input.read((char*)element.data(), element.size()*sizeof(PetscInt));
   input.close();
 
@@ -351,7 +351,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   this->PR.resize(0);
   this->MG_comms.resize(0);
   this->MG_comms.push_back(comm);
-  PetscInt lrow = 2*nddist(myid+1)-2*nddist(myid), lcol;
+  PetscInt lrow = this->numDims*nddist(myid+1)-this->numDims*nddist(myid), lcol;
   for (int level = 0; ; level++)
   {
     stringstream strmlvl;
@@ -383,8 +383,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   this->active.resize(this->nLocElem);
   ierr = MPI_File_open(this->comm, (folder + "/active.bin").c_str(), MPI_MODE_RDONLY,
                        MPI_INFO_NULL, &fh); CHKERRQ(ierr);
-  ierr = MPI_File_seek(fh, this->elmdist(myid) * this->nLocElem *
-                       sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, this->elmdist(myid) * sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
   ierr = MPI_File_read_all(fh, this->active.data(), this->nLocElem,
                             MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
