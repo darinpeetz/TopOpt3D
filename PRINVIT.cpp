@@ -345,19 +345,16 @@ PetscErrorCode PRINVIT::Compute()
       ierr = VecSet(Q[0][nev_conv], 0.0); CHKERRQ(ierr);
       ierr = VecMAXPY(Q[0][nev_conv], j, W.data(), V); CHKERRQ(ierr);
       theta = S(0);
+      if (isnan(theta)) {
+        SETERRQ(comm, PETSC_ERR_FP, "Approximate eigenvalue is not a number");
+      }
+
       ierr = MatMult(A[0], Q[0][nev_conv], AQ[0][nev_conv]); CHKERRQ(ierr);
       ierr = MatMult(B[0], Q[0][nev_conv], BQ[0][nev_conv]); CHKERRQ(ierr);
       ierr = VecWAXPY(residual, -theta, BQ[0][nev_conv], AQ[0][nev_conv]); CHKERRQ(ierr);
       ierr = VecScale(residual, -1.0); CHKERRQ(ierr);
 
       ierr = Update_Preconditioner(residual, rnorm, Au_norm); CHKERRQ(ierr);
-
-      if (this->verbose >= 2) {
-        ierr = Print_Status(rnorm); CHKERRQ(ierr);
-      }
-      if (isnan(theta)) {
-        SETERRQ(comm, PETSC_ERR_FP, "Approximate eigenvalue is not a number");
-      }
 
       ierr = PetscLogEventEnd(EIG_Prep, 0, 0, 0, 0); CHKERRQ(ierr);
       if (((rnorm/abs(theta) >= eps) && // Converged on residual norm
@@ -405,6 +402,10 @@ PetscErrorCode PRINVIT::Compute()
         ierr = PetscLogEventEnd(EIG_Compute, 0, 0, 0, 0); CHKERRQ(ierr);
         return 0;
       }
+    }
+
+    if (this->verbose >= 2) {
+      ierr = Print_Status(rnorm); CHKERRQ(ierr);
     }
 
     // Check for restart
