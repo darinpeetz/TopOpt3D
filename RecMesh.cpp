@@ -24,10 +24,14 @@ typedef Eigen::Matrix<PetscScalar, -1, -1> MatrixXPS;
 typedef Eigen::Array<PetscInt, -1, -1, Eigen::RowMajor> ArrayXXPIRM;
 typedef Eigen::Matrix<double,-1,-1,Eigen::RowMajor> MatrixXdRM;
 
-
-/*****************************************************************/
-/**                    Load Mesh for Restart                    **/
-/*****************************************************************/
+/********************************************************************
+ * Load Mesh for Restart
+ * 
+ * @param xIni: The initial design values (output)
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
 {
   PetscErrorCode ierr = 0;
@@ -65,8 +69,8 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
     SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Unable to open elements file");
   filesize = input.tellg();
   SetDimension(log2(filesize/sizeof(PetscInt)/elmdist(elmdist.size()-1)));
-  input.seekg(elmdist(myid)*pow(numDims,2)*sizeof(PetscInt));
-  element.resize(elmdist(myid+1)-elmdist(myid), pow(numDims,2));
+  input.seekg(elmdist(myid)*pow(2, numDims)*sizeof(PetscInt));
+  element.resize(elmdist(myid+1)-elmdist(myid), pow(2, numDims));
   input.read((char*)element.data(), element.size()*sizeof(PetscInt));
   input.close();
 
@@ -300,7 +304,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   Localize();
 
   // Element sizes
-  double temp = node(element(0,1),0) - node(element(0,0),0);
+  PetscScalar temp = node(element(0,1),0) - node(element(0,0),0);
   if (numDims > 1)
     temp *= node(element(0,3),1) - node(element(0,0),1);
   if (numDims > 2)
@@ -347,7 +351,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   this->PR.resize(0);
   this->MG_comms.resize(0);
   this->MG_comms.push_back(comm);
-  PetscInt lrow = 2*nddist(myid+1)-2*nddist(myid), lcol;
+  PetscInt lrow = this->numDims*nddist(myid+1)-this->numDims*nddist(myid), lcol;
   for (int level = 0; ; level++)
   {
     stringstream strmlvl;
@@ -379,8 +383,7 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   this->active.resize(this->nLocElem);
   ierr = MPI_File_open(this->comm, (folder + "/active.bin").c_str(), MPI_MODE_RDONLY,
                        MPI_INFO_NULL, &fh); CHKERRQ(ierr);
-  ierr = MPI_File_seek(fh, this->elmdist(myid) * this->nLocElem *
-                       sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
+  ierr = MPI_File_seek(fh, this->elmdist(myid) * sizeof(bool), MPI_SEEK_SET); CHKERRQ(ierr);
   ierr = MPI_File_read_all(fh, this->active.data(), this->nLocElem,
                             MPI::BOOL, MPI_STATUS_IGNORE); CHKERRQ(ierr);
   ierr = MPI_File_close(&fh); CHKERRQ(ierr);
@@ -409,18 +412,25 @@ PetscErrorCode TopOpt::LoadMesh(Eigen::VectorXd &xIni)
   return ierr;
 }
   
-/*****************************************************************/
-/**                      Create Base Mesh                       **/
-/*****************************************************************/
-PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
-                                    double Rmin, double Rmax,
-                                    bool Reorder_Mesh, int mg_levels,
-                                    PetscInt min_size )
+/********************************************************************
+ * Create Base Mesh
+ * 
+ * @param dimensions: Lower and upper limit for each dimension of domain
+ * @param Nel: Number of elements in each dimension
+ * @param Rmin: Minimum filter radius
+ * @param Rmax: Maximum filter radius
+ * @param Reorder_Mesh: flag indicating whether to use ParMETIS or not
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::CreateMesh(VectorXPS dimensions, ArrayXPI Nel,
+                                  double Rmin, double Rmax,
+                                  bool Reorder_Mesh)
 {
   PetscErrorCode ierr = 0;
 
-  if (this->verbose >= 3)
-  {
+  if (this->verbose >= 3) {
     ierr = PetscFPrintf(this->comm, this->output, "Generating mesh\n"); CHKERRQ(ierr);
   }
 
@@ -431,8 +441,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   regular = 1;
 
   /// Constitutive matrix
-  switch (this->numDims)
-  {
+  switch (this->numDims) {
     case 1:
       this->d.resize(1,1);
       this->d << this->E0;
@@ -463,9 +472,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   PetscInt last[3] = {1, 1, 1};
   // Set the last element of lower dimensions
   for (short dim = 0; dim < this->numDims-1; dim++)
-  {
     last[dim] = Nel(dim);
-  }
   first[this->numDims-1] = ((double)myid/nprocs)*Nel(this->numDims-1);
   last[this->numDims-1] = ((double)(myid+1)/nprocs)*Nel(this->numDims-1);
   // Number of nodes in each dimension;
@@ -477,10 +484,8 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   this->nElem = Nel(0)*Nel(1)*Nel(2);
   this->nLocElem = (last[0]-first[0])*(last[1]-first[1])*(last[2]-first[2]);
   this->element.resize( this->nLocElem, pow(2,this->numDims) );
-  for (PetscInt layer = first[2]; layer < last[2]; layer++)
-  { // Loop through z-dimension
-    for (PetscInt row = first[1]; row < last[1]; row++)
-    { // Loop through y-dimension
+  for (PetscInt layer = first[2]; layer < last[2]; layer++) { // Loop through z-dimension
+    for (PetscInt row = first[1]; row < last[1]; row++) { // Loop through y-dimension
       // Add first node to element
       this->element.block((layer-first[2])*(Nel(0)*Nel(1)) +
           (row-first[1])*(Nel(0)), 0, last[0]-first[0], 1) =
@@ -497,14 +502,12 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   }
 
   // Add third and fourth nodes to all elements for 2D or 3D analysis
-  if (this->numDims > 1)
-  {
+  if (this->numDims > 1) {
     this->element.col(2) = this->element.col(1) + Nnd(0);
     this->element.col(3) = this->element.col(0) + Nnd(0);
   }
   // Add nodes 5 through 8 to all elements for 3D analysis
-  if (this->numDims > 2)
-  {
+  if (this->numDims > 2) {
     this->element.block(0, 4, this->element.rows(), 4) =
       this->element.block(0, 0, this->element.rows(), 4) + (Nnd(0)*Nnd(1));
   }
@@ -512,21 +515,20 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   /// Element Distribution Information
   this->elmdist.setZero(nprocs+1);
   this->elmdist(myid) = first[0] + first[1]*Nel(0) + first[2]*Nel(0)*Nel(1);
-  MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, elmdist.data(), 1, MPI_PETSCINT, comm);
+  ierr = MPI_Allgather(MPI_IN_PLACE, 0, MPI_PETSCINT, elmdist.data(), 1,
+                       MPI_PETSCINT, comm); CHKERRQ(ierr);
   elmdist(nprocs) = nElem;
 
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated %i elements\n",
-                        this->nElem); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated %i "
+                        "elements\n", this->nElem); CHKERRQ(ierr);
   }
 
   /// Create the filter
   // dx is edgelength of elements in each direction
   double dx[3] = {0, 0, 0};
   elemSize.setOnes(1);
-  for (int i = 0; i < this->numDims; i++)
-  {
+  for (int i = 0; i < this->numDims; i++) {
     dx[i] = (dimensions(2*i+1) - dimensions(2*i))/Nel(i);
     elemSize *= dx[i];
   }
@@ -534,20 +536,23 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   ArrayXPS MinFK, MaxFK;
   ierr = RecFilter(first, last, dx, Rmin, Nel, MinFI, MinFJ, MinFK); CHKERRQ(ierr);
 
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated min scale filter\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated "
+                        "min scale filter\n"); CHKERRQ(ierr);
   }
 
   // Maximum length scale filter
   ierr = RecFilter(first, last, dx, Rmax, Nel, MaxFI, MaxFJ, MaxFK, 1); CHKERRQ(ierr);
 
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated max scale filter\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully generated max "
+                        "scale filter\n"); CHKERRQ(ierr);
   }
 
   // Create the geometric coarse-grid restrictions
+  PetscInt mg_levels = (PetscInt)std::log2(Nel.segment(0, this->numDims).minCoeff());
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_levels",
+                            &mg_levels, NULL); CHKERRQ(ierr);
   ArrayXPI I[mg_levels-1], J[mg_levels-1], cList[mg_levels-1];
   Eigen::Array<PetscScalar, -1, 1> K[mg_levels-1];
   ierr = Create_Interpolations(first, last, Nel, I, J, K, cList, mg_levels);
@@ -577,16 +582,14 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   this->node.col(0) = Eigen::VectorXd::LinSpaced(nLocNode[0],dx[0]*first[0]
                         +dimensions(0),dx[0]*last[0]+dimensions(0))
                         .replicate(nLocNode[1],1).replicate(nLocNode[2],1);
-  if (this->numDims > 1)
-  {
+  if (this->numDims > 1) {
     Eigen::MatrixXd temp = Eigen::RowVectorXd::LinSpaced(nLocNode[(1)],
                            dx[1]*first[1]+dimensions(2),dx[1]*last[1]+dimensions(2))
                            .replicate(nLocNode[0],1);
     temp.resize(nLocNode[0]*nLocNode[1],1);
     this->node.col(1) = temp.replicate(nLocNode[2],1);
   }
-  if (this->numDims > 2)
-  {
+  if (this->numDims > 2) {
     Eigen::MatrixXd temp = Eigen::RowVectorXd::LinSpaced(nLocNode[2],
                            dx[2]*first[2]+dimensions(4),dx[2]*last[2]+dimensions(4))
                            .replicate(nLocNode[0],1).replicate(nLocNode[1],1);
@@ -594,8 +597,7 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
     this->node.col(2) = temp;
   }
 
-  if (this->verbose >= 3)
-  {
+  if (this->verbose >= 3) {
     ierr = PetscFPrintf(this->comm, this->output, "Successfully generated %i nodes\n",
                         this->nNode); CHKERRQ(ierr);
   }
@@ -613,16 +615,14 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
                        dx[0]*first[0]+dimensions(0),dx[0]*last[0]+dimensions(0)-dx[0])
                        .replicate(last[1]-first[1],1)
                        .replicate(last[2]-first[2],1).array() + dx[0]/2).matrix();
-  if (this->numDims > 1)
-  {
+  if (this->numDims > 1) {
     Eigen::MatrixXd temp = (Eigen::RowVectorXd::LinSpaced(last[1]-first[1],
                            dx[1]*first[1]+dimensions(2),dx[1]*last[1]+dimensions(2)-dx[1])
                            .replicate(last[0]-first[0],1).array() + dx[1]/2).matrix();
     temp.resize(temp.size(),1);
     elemCenters.col(1) = temp.replicate(last[2]-first[2],1);
   }
-  if (this->numDims > 2)
-  {
+  if (this->numDims > 2) {
     Eigen::MatrixXd temp = (Eigen::RowVectorXd::LinSpaced(last[2]-first[2],
                            dx[2]*first[2]+dimensions(4),dx[2]*last[2]+dimensions(4)-dx[2])
                            .replicate(last[0]-first[0],1)
@@ -640,46 +640,49 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   Eigen::Array<bool, -1, 1> elemValidity = Eigen::Array<bool, -1, 1>::Ones(nLocElem);
   Domain(elemCenters, elemValidity, "Domain");
 
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Elements have been marked for removal\n");
-                        CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Elements have been marked "
+                        "for removal\n"); CHKERRQ(ierr);
   } 
 
   // Trim domain
   int nInterfaceNodes = 1;
   for (int dim = 1; dim < numDims; dim++)
     nInterfaceNodes *= Nel(dim-1)+1;
-  ApplyDomain(elemValidity, padding, nInterfaceNodes, MinFI, MinFJ, MinFK,
-              MaxFI, MaxFJ, MaxFK, I, J, K, cList, mg_levels);
+  ierr = ApplyDomain(elemValidity, padding, nInterfaceNodes, MinFI, MinFJ, MinFK,
+                     MaxFI, MaxFJ, MaxFK, I, J, K, cList, mg_levels); CHKERRQ(ierr);
 
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully trimmed domain "
-                        "to %i elements and %i nodes\n", this->nElem, this->nNode); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully trimmed "
+                        "domain to %i elements and %i nodes\n",
+                        this->nElem, this->nNode); CHKERRQ(ierr);
   }
 
   /// Get a better distribution of elements
-  ReorderParMetis(Reorder_Mesh, MinFI, MinFJ, MinFK, MaxFI, MaxFJ, MaxFK);
+  ierr = ReorderParMetis(Reorder_Mesh, MinFI, MinFJ, MinFK, MaxFI,
+                         MaxFJ, MaxFK); CHKERRQ(ierr);
   double temp = elemSize(0);
   elemSize.setConstant(nLocElem, temp);
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully redistributed elements\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully "
+                        "redistributed elements\n"); CHKERRQ(ierr);
   }
 
   /// Node Distribution and Interpolation reordering
   NodeDist(I, J, K, cList, mg_levels);
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully redistributed nodes\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully "
+                        "redistributed nodes\n"); CHKERRQ(ierr);
   }
 
   /// Interpolation matrix assembly
+  PetscInt min_size = cList[mg_levels-2].size();
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_coarse_eq_limit",
+                            &min_size, NULL); CHKERRQ(ierr);
   ierr = Assemble_Interpolation(I, J, K, cList, mg_levels, min_size);
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully assembled GMG operators\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully assembled "
+                        "GMG operators\n"); CHKERRQ(ierr);
   }
 
   /// Establish Global Numbering
@@ -691,9 +694,9 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   /// Get any needed ghost information
   Expand_Elem();
   Expand_Node();
-  if (this->verbose >= 3)
-  {
-    ierr = PetscFPrintf(this->comm, this->output, "Successfully added ghost nodes/elements\n"); CHKERRQ(ierr);
+  if (this->verbose >= 3) {
+    ierr = PetscFPrintf(this->comm, this->output, "Successfully added ghost "
+                        "nodes/elements\n"); CHKERRQ(ierr);
   }
 
   /// Assign Ghost Info and create DV vectors
@@ -718,22 +721,42 @@ PetscErrorCode TopOpt::CreateMesh ( VectorXPS dimensions, ArrayXPI Nel,
   /// Local Element Numbering
   Localize();
 
-  if (this->verbose >= 3)
-  {
+  if (this->verbose >= 3) {
     ierr = PetscFPrintf(this->comm, this->output, "Mesh generation complete\n"); CHKERRQ(ierr);
   }
 
   return 0;
 }
 
-/*****************************************************************/
-/**                  Cut Mesh if necessary                      **/
-/*****************************************************************/
-PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
-                 int padding, int nInterfaceNodes, ArrayXPI &MinFI,
-                 ArrayXPI &MinFJ, ArrayXPS &MinFK, ArrayXPI &MaxFI,
-                 ArrayXPI &MaxFJ, ArrayXPS &MaxFK, ArrayXPI *I,
-                 ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int &mg_levels )
+/********************************************************************
+ * Cut elements and nodes from mesh if requested
+ * 
+ * @param elemValidity: Flag for each element to be included (True) or
+ *                      removed (False), set on output
+ * @param padding: Product of number of elements in each dimension
+ *                 less than n, where n is the dimensionality of the problem
+ * @param nInterfaceNodes: Same as padding, but for nodes
+ * @param MinFI: row indices of minimum filter matrix triplets
+ * @param MinFJ: column indices of minimum filter matrix triplets
+ * @param MinFK: values of minimum filter matrix triplets
+ * @param MaxFI: row indices of maximum filter matrix triplets
+ * @param MaxFJ: column indices of maximum filter matrix triplets
+ * @param MaxFK: values of maximum filter matrix triplets
+ * @param I: list of row indices of each GMG projection operator
+ * @param J: list of column indices of each GMG projection operator
+ * @param K: list of values of each GMG projection operator
+ * @param cList: List of coarse nodes on each level of GMG hierarchy
+ * @param mg_levels: Number of levels in GMG hierarchy
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::ApplyDomain(Eigen::Array<bool, -1, 1> elemValidity,
+                                   int padding, int nInterfaceNodes, ArrayXPI &MinFI,
+                                   ArrayXPI &MinFJ, ArrayXPS &MinFK, ArrayXPI &MaxFI,
+                                   ArrayXPI &MaxFJ, ArrayXPS &MaxFK, ArrayXPI *I,
+                                   ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList,
+                                   int &mg_levels)
 {
   PetscErrorCode ierr = 0;
   /// elem validity should be of size nLocElem, padding is the number of
@@ -1245,15 +1268,35 @@ PetscErrorCode TopOpt::ApplyDomain( Eigen::Array<bool, -1, 1> elemValidity,
   return ierr;
 }
 
-/*****************************************************************/
-/**               Get partitioning with ParMetis                **/
-/*****************************************************************/
-idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh,
-                               ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
-                               ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
-                               idx_t nparts, idx_t ncommonnodes, real_t *tpwgts,
-                               real_t *ubvec, idx_t *opts, idx_t ncon,
-                               idx_t *elmwgt, idx_t wgtflag, idx_t numflag )
+/********************************************************************
+ * Get partitioning with ParMETIS
+ * 
+ * @param Reorder_Mesh: Flag indicating whether to use ParMETIS or not
+ * @param MinFI: row indices of minimum filter matrix triplets
+ * @param MinFJ: column indices of minimum filter matrix triplets
+ * @param MinFK: values of minimum filter matrix triplets
+ * @param MaxFI: row indices of maximum filter matrix triplets
+ * @param MaxFJ: column indices of maximum filter matrix triplets
+ * @param MaxFK: values of maximum filter matrix triplets
+ * @param nparts: Number of partitions to create
+ * @param ncommonnodes: See ParMETIS manual for PartMeshKway
+ * @param tpwgts: See ParMETIS manual for PartMeshKway
+ * @param ubvec: See ParMETIS manual for PartMeshKway
+ * @param opts: See ParMETIS manual for PartMeshKway
+ * @param ncon: See ParMETIS manual for PartMeshKway
+ * @param elmwgt: See ParMETIS manual for PartMeshKway
+ * @param wgtflag: See ParMETIS manual for PartMeshKway
+ * @param numflag: See ParMETIS manual for PartMeshKway
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+idx_t TopOpt::ReorderParMetis(bool Reorder_Mesh,
+                              ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
+                              ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK,
+                              idx_t nparts, idx_t ncommonnodes, real_t *tpwgts,
+                              real_t *ubvec, idx_t *opts, idx_t ncon,
+                              idx_t *elmwgt, idx_t wgtflag, idx_t numflag)
 {
   PetscErrorCode ierr = 0;
 
@@ -1346,9 +1389,21 @@ idx_t TopOpt::ReorderParMetis( bool Reorder_Mesh,
   return ierr;
 }
 
-/*****************************************************************/
-/**                    Redistribute elements                    **/
-/*****************************************************************/
+/********************************************************************
+ * Redistribute elements
+ * 
+ * @param partition: Indicates which process each local element 
+ *                   should be moved to
+ * @param MinFI: row indices of minimum filter matrix triplets
+ * @param MinFJ: column indices of minimum filter matrix triplets
+ * @param MinFK: values of minimum filter matrix triplets
+ * @param MaxFI: row indices of maximum filter matrix triplets
+ * @param MaxFJ: column indices of maximum filter matrix triplets
+ * @param MaxFK: values of maximum filter matrix triplets
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
                                 ArrayXPI &MinFI, ArrayXPI &MinFJ, ArrayXPS &MinFK,
                                 ArrayXPI &MaxFI, ArrayXPI &MaxFJ, ArrayXPS &MaxFK)
@@ -1547,9 +1602,18 @@ PetscErrorCode TopOpt::ElemDist(Eigen::Array<idx_t, -1, 1> &partition,
   return ierr;
 }
 
-/*****************************************************************/
-/**       Get new element numbers for reordering filters        **/
-/*****************************************************************/
+/********************************************************************
+ * Get new element numbers for nonlocal elements for reordering filters
+ * 
+ * @param ghostStart: First column of global filter used by this process
+ * @param ghostStart: Last column of global filter used by this process
+ * @param newElemNumber: New element numberings for local elements
+ * @param allElemNumber: New element numberings for each column of local
+ *                       part of filter matrix (output)
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
                                       ArrayXPI &newElemNumber,
                                       ArrayXPI &allElemNumber)
@@ -1645,10 +1709,20 @@ PetscErrorCode TopOpt::GetElemNumbers(PetscInt ghostStart, PetscInt ghostEnd,
   return ierr;
 }
 
-/*****************************************************************/
-/**                      Node Distribution                      **/
-/*****************************************************************/
-PetscErrorCode TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI *cList, int mg_levels)
+/********************************************************************
+ * Redistribute nodes
+ * 
+ * @param I: list of row indices of each GMG projection operator
+ * @param J: list of column indices of each GMG projection operator
+ * @param K: list of values of each GMG projection operator
+ * @param cList: List of coarse nodes on each level of GMG hierarchy
+ * @param mg_levels: Number of levels in GMG hierarchy
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
+                                ArrayXPI *cList, int mg_levels)
 {
     PetscErrorCode ierr = 0;
 
@@ -1733,9 +1807,13 @@ PetscErrorCode TopOpt::NodeDist(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K, ArrayXPI 
     return ierr;
 }
 
-/*****************************************************************/
-/**      Capture surrounding elements on other processes        **/
-/*****************************************************************/
+/********************************************************************
+ * Capture surrounding elements on other processes
+ * 
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Expand_Elem()
 {
   PetscErrorCode ierr = 0;
@@ -1837,9 +1915,13 @@ PetscErrorCode TopOpt::Expand_Elem()
   return ierr;
 }
 
-/*****************************************************************/
-/**       Capture surrounding nodes on other processes          **/
-/*****************************************************************/
+/********************************************************************
+ * Capture surrounding nodes on other processes
+ * 
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Expand_Node()
 {
   PetscErrorCode ierr = 0;
@@ -1917,9 +1999,12 @@ PetscErrorCode TopOpt::Expand_Node()
   return ierr;
 }
 
-/*****************************************************************/
-/**       Set up ghost communications for PEtSc vectors         **/
-/*****************************************************************/
+/********************************************************************
+ * Set up ghost communications for PETSc vectors
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Initialize_Vectors()
 {
     PetscErrorCode ierr = 0;
@@ -1954,9 +2039,13 @@ PetscErrorCode TopOpt::Initialize_Vectors()
     return ierr;
 }
 
-/*****************************************************************/
-/**       Convert global numberings to local numberings         **/
-/*****************************************************************/
+/********************************************************************
+ * Convert global numberings to local numberings
+ * 
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
 PetscErrorCode TopOpt::Localize()
 {
     PetscErrorCode ierr = 0;
@@ -1975,10 +2064,14 @@ PetscErrorCode TopOpt::Localize()
     return ierr;
 }
 
-/*****************************************************************/
-/*                Get centroids of all elements                 **/
-/*****************************************************************/
-MatrixXPS TopOpt::GetCentroids( )
+/********************************************************************
+ * Get centroids of all elements
+ * 
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+MatrixXPS TopOpt::GetCentroids()
 {
   MatrixXPS elemCenters = Eigen::ArrayXXd::Zero(this->nLocElem,this->numDims);
   for (PetscInt el = 0; el < this->nLocElem; el++) {
