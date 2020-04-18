@@ -95,18 +95,15 @@ PetscErrorCode JDMG::PCMG_Extract(PC pcmg, bool isB, bool isA)
     B[ii] = NULL;
   }
   A.resize(levels, NULL); B.resize(levels, NULL);
-  for (PetscInt ii = levels-1, jj = 0; ii > 0; ii--, jj++)
-  {
+  for (PetscInt ii = levels-1, jj = 0; ii > 0; ii--, jj++) {
     ierr = PCMGGetInterpolation(pcmg, ii, P.data()+jj); CHKERRQ(ierr);
     ierr = PetscObjectReference((PetscObject)P[jj]); CHKERRQ(ierr);
-    if (isA)
-    {
+    if (isA) {
       ierr = PCMGGetSmoother(pcmg, ii, &smoother); CHKERRQ(ierr);
       ierr = KSPGetOperators(smoother, A.data()+jj+1, NULL); CHKERRQ(ierr);
       ierr = PetscObjectReference((PetscObject)A[jj+1]); CHKERRQ(ierr);
     }
-    if (isB)
-    {
+    if (isB) {
       ierr = PCMGGetSmoother(pcmg, ii-1, &smoother); CHKERRQ(ierr);
       ierr = KSPGetOperators(smoother, B.data()+jj+1, NULL); CHKERRQ(ierr);
       ierr = PetscObjectReference((PetscObject)B[jj+1]); CHKERRQ(ierr);

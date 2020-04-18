@@ -39,8 +39,7 @@ vector<PetscScalar> Get_Values(string line)
   unsigned short offset = 0;
   char *next;
   vector<PetscScalar> vals;
-  while (true)
-  {
+  while (true) {
     Find_Next_Digit(line.c_str(), offset, line.length());
     if (offset == line.length())
       break;
@@ -253,32 +252,27 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
   char *next;
 
   // Parse the file
-  while (!file.eof())
-  {
-    if (!active_section)
-    {
+  while (!file.eof()) {
+    if (!active_section) {
       active_section = !line.compare("[Params]");
       getline(file, line);
       file >> line;
     }
-    else
-    {
+    else {
       // Convert to all uppercase to avoid captilization errors
       for (string::size_type i = 0; i < line.length(); ++i)
         line[i] = toupper(line[i]);
 
       // Check which option is being set
       if (!line.compare(0,9,"[/PARAMS]"))
-        return ierr;
+        break;
       else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
         getline(file,line);
-      else if (!line.compare(0,10,"DIMENSIONS"))
-      {
+      else if (!line.compare(0,10,"DIMENSIONS")) {
         getline(file, line);
         offset = 0;
         vector<PetscScalar> temp;
-        while (true)
-        {
+        while (true) {
           Find_Next_Digit(line.c_str(), offset, line.length());
           if (offset == line.length())
             break;
@@ -287,13 +281,11 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         }
         Dimensions = Eigen::Map<Eigen::VectorXd>(temp.data(), temp.size());
       }
-      else if (!line.compare(0,3,"NEL"))
-      {
+      else if (!line.compare(0,3,"NEL")) {
         getline(file, line);
         offset = 0;
         vector<PetscInt> temp;
-        while (true)
-        {
+        while (true) {
           Find_Next_Digit(line.c_str(), offset, line.length());
           if (offset == line.length())
             break;
@@ -302,23 +294,19 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         }
         Nel = Eigen::Map<ArrayXPI>(temp.data(), temp.size());
       }
-      else if (!line.compare(0,3,"NU0"))
-      {
+      else if (!line.compare(0,3,"NU0")) {
         file >> line;
         Nu0 = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,2,"E0"))
-      {
+      else if (!line.compare(0,2,"E0")) {
         file >> line;
         E0 = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,7,"DENSITY"))
-      {
+      else if (!line.compare(0,7,"DENSITY")) {
         file >> line;
         density = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,7,"PENALTY"))
-      {
+      else if (!line.compare(0,7,"PENALTY")) {
         file >> line;
         PetscScalar pmin = strtod(line.c_str(), NULL);
         file >> line;
@@ -329,8 +317,7 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
           this->penalties.push_back(p);
       }
-      else if (!line.compare(0,12,"VOID_PENALTY"))
-      {
+      else if (!line.compare(0,12,"VOID_PENALTY")) {
         file >> line;
         PetscScalar pmin = strtod(line.c_str(), NULL);
         file >> line;
@@ -339,22 +326,19 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         PetscScalar pmax = strtod(line.c_str(), NULL);
         if (pmax == pmin || pstep == 0)
           this->void_penalties.push_back(pmin);
-        else
-        {
+        else {
           this->void_penalties.reserve(PetscInt(std::max(pmax-pmin, 0.0)/pstep));
           for (PetscScalar p = pmin; p <= pmax+pstep/2; p += pstep)
             this->void_penalties.push_back(p);
         }
       }
-      else if (!line.compare(0,5,"MATER") || !line.compare(0,6,"INTERP"))
-      {
+      else if (!line.compare(0,5,"MATER") || !line.compare(0,6,"INTERP")) {
         file >> line;
         if (!line.compare(0,4,"SIMP")) {
           string params;
           getline(file, params);
           offset = 0;
-          while (true)
-          {
+          while (true) {
             Find_Next_Digit(params.c_str(), offset, params.length());
             if (offset == params.length())
               break;
@@ -373,53 +357,43 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
             interpolation = SIMP; }
         }
       }
-      else if (!line.compare(0,10,"RMINFACTOR"))
-      {
+      else if (!line.compare(0,10,"RMINFACTOR")) {
         file >> line;
         Rmin = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
       }
-      else if (!line.compare(0,4,"RMIN"))
-      {
+      else if (!line.compare(0,4,"RMIN")) {
         file >> line;
         Rmin = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,10,"RMAXFACTOR"))
-      {
+      else if (!line.compare(0,10,"RMAXFACTOR")) {
         file >> line;
         Rmax = strtod(line.c_str(), NULL)*(Dimensions(1)-Dimensions(0))/Nel(0);
       }
-      else if (!line.compare(0,4,"RMAX"))
-      {
+      else if (!line.compare(0,4,"RMAX")) {
         file >> line;
         Rmax = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,12,"VOID_MINIMUM"))
-      {
+      else if (!line.compare(0,12,"VOID_MINIMUM")) {
         file >> line;
         this->vdMin = strtod(line.c_str(), NULL);
       }
-      else if (!line.compare(0,14,"MIN_ITERATIONS"))
-      {
+      else if (!line.compare(0,14,"MIN_ITERATIONS")) {
         file >> line;
         optmma->Set_Iter_Limit_Min(strtol(line.c_str(), NULL, 0));
       }
-      else if (!line.compare(0,14,"MAX_ITERATIONS"))
-      {
+      else if (!line.compare(0,14,"MAX_ITERATIONS")) {
         file >> line;
         optmma->Set_Iter_Limit_Max(strtol(line.c_str(), NULL, 0));
       }
-      else if (!line.compare(0,9,"KKT_LIMIT"))
-      {
+      else if (!line.compare(0,9,"KKT_LIMIT")) {
         file >> line;
         optmma->Set_KKT_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,12,"CHANGE_LIMIT"))
-      {
+      else if (!line.compare(0,12,"CHANGE_LIMIT")) {
         file >> line;
         optmma->Set_Change_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,10,"STEP_LIMIT"))
-      {
+      else if (!line.compare(0,10,"STEP_LIMIT")) {
         file >> line;
         optmma->Set_Step_Limit(strtod(line.c_str(), NULL));
       }
@@ -466,18 +440,15 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
           SETERRQ1(comm, PETSC_ERR_SUP, "Unknown smoother type \"%s\" specified",
                    smoother.c_str()); }
       }
-      else if (!line.compare(0,7,"VERBOSE"))
-      {
+      else if (!line.compare(0,7,"VERBOSE")) {
         file >> line;
         this->verbose = strtol(line.c_str(), NULL, 0);
       }
-      else if (!line.compare(0,6,"FOLDER") || !line.compare(0,7,"RESTART"))
-      {
+      else if (!line.compare(0,6,"FOLDER") || !line.compare(0,7,"RESTART")) {
         file.ignore();
         getline(file, this->folder);
       }
-      else if (!line.compare(0,5,"PRINT"))
-      {
+      else if (!line.compare(0,5,"PRINT")) {
         file >> line;
         print_every = strtol(line.c_str(), NULL, 0);
       }
@@ -524,19 +495,16 @@ PetscErrorCode TopOpt::Set_Funcs()
   // Parse the file
   while (!file.eof())
   {
-    if (!active_section)
-    {
+    if (!active_section) {
       active_section = !line.compare("[Functions]");
       getline(file, line);
       file >> line;
     }
-    else
-    {
+    else {
       FUNCTION_TYPE func;
       if (!line.compare("[/Functions]"))
         return ierr;
-      if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
-      {
+      if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//")) {
         getline(file,line);
         file >> line;
         continue;
@@ -558,34 +526,28 @@ PetscErrorCode TopOpt::Set_Funcs()
       vector<PetscScalar> values;
       PetscBool objective = PETSC_TRUE;
 
-      while (true)
-      {
-        if (!line.compare(0,9,"Objective"))
-        {
+      while (true) {
+        if (!line.compare(0,9,"Objective")) {
           objective = PETSC_TRUE;
           file >> line;
           continue;
         }
-        else if (!line.compare(0,10,"Constraint"))
-        {
+        else if (!line.compare(0,10,"Constraint")) {
           objective = PETSC_FALSE;
           file >> line;
           continue;
         }
-        else if (!line.compare(0,6,"Values"))
-        {
+        else if (!line.compare(0,6,"Values")) {
           file >> line;
           if (!isdigit(line.c_str()[0]))
             SETERRQ(comm, PETSC_ERR_ARG_NULL, "Need to specify function weight/constraint");
-          while (isdigit(line.c_str()[0]) || !line.compare(0,1,"-"))
-          {
+          while (isdigit(line.c_str()[0]) || !line.compare(0,1,"-")) {
             values.push_back(strtod(line.c_str(), NULL));
             file >> line;
           }
           continue;
         }
-        else if (!line.compare(0,5,"Range"))
-        {
+        else if (!line.compare(0,5,"Range")) {
           file >> line;
           min = strtod(line.c_str(), NULL);
           file >> line;
@@ -593,15 +555,13 @@ PetscErrorCode TopOpt::Set_Funcs()
           file >> line;
           continue;
         }
-        else if (!line.compare(0,3,"Nev"))
-        {
+        else if (!line.compare(0,3,"Nev")) {
           // To prevent errors from old input files
           getline(file, line);
           continue;
         }
         // Normalize constraint values
-        if (objective == PETSC_FALSE)
-        {
+        if (objective == PETSC_FALSE) {
           for (unsigned int i = 0; i < values.size(); i++)
             values[i] *= max-min;
         }
@@ -659,24 +619,19 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
   char enter[30], exit[30];
   sprintf(enter, "[%s]", key.c_str());
   sprintf(exit, "[/%s]", key.c_str());
-  while (!file.eof())
-  {
-    if (!active_section)
-    {
+  while (!file.eof()) {
+    if (!active_section) {
       active_section = !line.compare(enter);
       getline(file, line);
       file >> line;
     }
-    else
-    {
-      if (!line.compare(exit))
-      {
+    else {
+      if (!line.compare(exit)) {
         if (D.cols() > 0) // Only set if domain was specified
           elemValidity = (D.col(D.cols()-1) < 0.0);
         return ierr;
       }
-      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
-      {
+      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//")) {
         getline(file,line);
         file >> line;
         continue;
@@ -711,17 +666,14 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
         D.conservativeResize(D.rows(), D.cols()+1);
         D.col(D.cols()-1) = Domain::Ellipsoid(Points, center, radius);
       }
-      else if (line[0] == 'C') // Cylinder
-      {
+      else if (line[0] == 'C') { // Cylinder
         ArrayXPS center;
         VectorXPS normal;
         PetscScalar r, h;
         getline(file, line);
-        while (true)
-        {
+        while (true) {
           file >> line;
-          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E')
-          {
+          if (toupper(line[0]) == 'C' && toupper(line[1]) == 'E') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -729,8 +681,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
             center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
           }
-          if (toupper(line[0]) == 'N')
-          {
+          if (toupper(line[0]) == 'N') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -738,14 +689,12 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
             normal = Eigen::Map<VectorXPS>(temp.data(), temp.size());
             continue;
           }
-          if (toupper(line[0]) == 'R')
-          {
+          if (toupper(line[0]) == 'R') {
             getline(file, line);
             r = strtod(line.c_str(), NULL);
             continue;
           }
-          if (toupper(line[0]) == 'H' && toupper(line[2]) == 'I')
-          {
+          if (toupper(line[0]) == 'H' && toupper(line[2]) == 'I') {
             getline(file, line);
             h = strtod(line.c_str(), NULL);
             continue;
@@ -755,15 +704,12 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
         D.conservativeResize(D.rows(), D.cols()+1);
         D.col(D.cols()-1) = Domain::Cylinder(Points, center, normal, h, r);
       }
-      else if (line[0] == 'H') // Hexahedron
-      {
+      else if (line[0] == 'H') { // Hexahedron
         ArrayXPS low, up;
         getline(file, line);
-        while (true)
-        {
+        while (true) {
           file >> line;
-          if (toupper(line[0]) == 'L')
-          {
+          if (toupper(line[0]) == 'L') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -771,8 +717,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
             low = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
           }
-          if (toupper(line[0]) == 'U' && toupper(line[1]) == 'P')
-          {
+          if (toupper(line[0]) == 'U' && toupper(line[1]) == 'P') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -785,16 +730,13 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
         D.conservativeResize(D.rows(), D.cols()+1);
         D.col(D.cols()-1) = Domain::Hexahedron(Points, low, up);
       }
-      else if (line[0] == 'P') // Plane
-      {
+      else if (line[0] == 'P') { // Plane
         ArrayXPS base;
         VectorXPS normal;
         getline(file, line);
-        while (true)
-        {
+        while (true) {
           file >> line;
-          if (toupper(line[0]) == 'B')
-          {
+          if (toupper(line[0]) == 'B') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -802,8 +744,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
             base = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
             continue;
           }
-          if (toupper(line[0]) == 'N')
-          {
+          if (toupper(line[0]) == 'N') {
             getline(file, line);
             vector<PetscScalar> temp = Get_Values(line);
             if (temp.size() < (unsigned short)numDims)
@@ -816,8 +757,8 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
         D.conservativeResize(D.rows(), D.cols()+1);
         D.col(D.cols()-1) = Domain::Plane(Points, base, normal);
       }
-      else if (line[0] == 'U' || line[0] == 'I' || line[0] == 'D')
-      { // Union, Intersection, or Difference
+      else if (line[0] == 'U' || line[0] == 'I' || line[0] == 'D') {
+        // Union, Intersection, or Difference
         char type = line[0];
         PetscInt d1, d2;
         file >> line;
@@ -834,8 +775,7 @@ PetscErrorCode TopOpt::Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elem
         else if (type == 'D') // Difference
           D.col(D.cols()-1) = Domain::Difference(D.col(d1), D.col(d2));
       }
-      else
-      {
+      else {
         SETERRQ1(comm, PETSC_ERR_SUP, "Unknown domain specifier, %s, specified",
                   line.c_str());
       }
@@ -865,23 +805,19 @@ PetscErrorCode TopOpt::Def_BC()
 
   // Parse the file
   BCTYPE TYPE;
-  while (!file.eof())
-  {
-    if (!active_section)
-    {
+  while (!file.eof()) {
+    if (!active_section) {
       active_section = !line.compare("[BC]");
       getline(file, line);
       file >> line;
     }
-    else
-    {
+    else {
       ArrayXPS center, radius, values;
       ArrayXXPS limits;
       TYPE = OTHER;
       if (!line.compare("[/BC]"))
         return ierr;
-      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//"))
-      {
+      else if (!line.compare(0,1,"%")||!line.compare(0,1,"#")||!line.compare(0,2,"//")) {
         getline(file,line);
         file >> line;
         continue;
@@ -900,11 +836,9 @@ PetscErrorCode TopOpt::Def_BC()
         TYPE = EIGEN;
       getline(file, line);
 
-      while (true)
-      {
+      while (true) {
         file >> line;
-        if (!line.compare(0,6,"Center"))
-        {
+        if (!line.compare(0,6,"Center")) {
           getline(file, line);
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
@@ -912,8 +846,7 @@ PetscErrorCode TopOpt::Def_BC()
           center = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
           continue;
         }
-        if (!line.compare(0,6,"Radius"))
-        {
+        if (!line.compare(0,6,"Radius")) {
           getline(file, line);
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
@@ -921,8 +854,7 @@ PetscErrorCode TopOpt::Def_BC()
           radius = Eigen::Map<ArrayXPS>(temp.data(), temp.size());
           continue;
         }
-        if (!line.compare(0,6,"Limits"))
-        {
+        if (!line.compare(0,6,"Limits")) {
           getline(file, line);
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size()/2 != (unsigned short)numDims)
@@ -931,8 +863,7 @@ PetscErrorCode TopOpt::Def_BC()
           limits.transposeInPlace();
           continue;
         }
-        if (!line.compare(0,6,"Values"))
-        {
+        if (!line.compare(0,6,"Values")) {
           getline(file, line);
           vector<PetscScalar> temp = Get_Values(line);
           if (temp.size() != (unsigned short)numDims)
