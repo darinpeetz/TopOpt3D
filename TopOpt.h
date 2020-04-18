@@ -23,7 +23,7 @@ typedef Eigen::Matrix<PetscScalar, -1, 1> VectorXPS;
 #define MPI_PETSCINT MPIU_INT
 #define MPI_PETSCSCALAR MPIU_SCALAR
 
-enum BCTYPE {SUPPORT, LOAD, MASS, SPRING, EIGEN, OTHER};
+enum BCTYPE {SUPPORT, LOAD, PRESSURE, MASS, SPRING, EIGEN, OTHER};
 enum MATINT {SIMP, SIMP_CUT, SIMP_LOGISTIC};
 
 /// The master structure containing all information to be carried between iterations
