@@ -51,6 +51,46 @@ vector<PetscScalar> Get_Values(string line)
   return vals;
 }
 
+
+/********************************************************************
+ * Get all local node indices describing all the elements faces
+ * 
+ * @param numDims: Number of dimensions to the problem (1D, 2D, or 3D)
+ * 
+ * @return faces: Array with face indices across each row
+ * 
+ *******************************************************************/
+ArrayXXPI Get_Faces(PetscInt numDims)
+{
+  switch (numDims) {
+    case 1: {
+      return ArrayXXPI::Zero(0, 0);
+    }
+    case 2: {
+      ArrayXXPI faces = ArrayXXPI(4, 2);
+      faces(0, 0) = 0; faces(0, 1) = 1;
+      faces(1, 0) = 1; faces(1, 1) = 2;
+      faces(2, 0) = 2; faces(2, 1) = 3;
+      faces(3, 0) = 3; faces(3, 1) = 0;
+      return faces;
+    }
+    case 3: {
+      ArrayXXPI faces = ArrayXXPI(6, 4);
+      faces(0, 0) = 0; faces(0, 1) = 1; faces(0, 2) = 2; faces(0, 3) = 3;
+      faces(1, 0) = 4; faces(1, 1) = 5; faces(1, 2) = 6; faces(1, 3) = 7;
+      faces(2, 0) = 0; faces(2, 1) = 1; faces(2, 2) = 5; faces(2, 3) = 4;
+      faces(3, 0) = 3; faces(3, 1) = 2; faces(3, 2) = 6; faces(3, 3) = 7;
+      faces(4, 0) = 0; faces(4, 1) = 4; faces(4, 2) = 7; faces(4, 3) = 3;
+      faces(5, 0) = 1; faces(5, 1) = 5; faces(5, 2) = 6; faces(5, 3) = 2;
+      return faces;
+    }
+    default: {
+      std::cout << "Bad dimension of problem provided to Get_Faces\n";
+      return ArrayXXPI::Zero(0, 0);
+    }
+  }
+}
+
 /********************************************************************
  * Set the boundary conditions using definitions from below
  * 
@@ -69,19 +109,41 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
   PetscErrorCode ierr = 0;
   ArrayXPS distances = ArrayXPS::Zero(nLocNode);
   Eigen::Array<bool, -1, 1> valid = Eigen::Array<bool, -1, 1>::Ones(nLocNode);
+  ArrayXPI newNode, newFace;
+  ArrayXXPI faces = Get_Faces(this->numDims);
 
-  // Get distances from center point and check limits in each direction
-  for (PetscInt i = 0; i < numDims; i++)
-  {
-    distances += ((node.block(0,i,nLocNode,1).array() - center(i))/radius(i)).square();
-    valid = valid && (node.block(0,i,nLocNode,1).array() >= limits(i,0)) &&
-            (node.block(0,i,nLocNode,1).array() <= limits(i,1));
+  if (TYPE != PRESSURE) {
+    // Get distances from center point and check limits in each direction
+    for (PetscInt i = 0; i < numDims; i++) {
+      distances += ((node.block(0,i,nLocNode,1).array() - center(i))/radius(i)).square();
+      valid = valid && (node.block(0,i,nLocNode,1).array() >= limits(i,0)) &&
+              (node.block(0,i,nLocNode,1).array() <= limits(i,1));
+    }
+    valid = valid && (distances <= 1);
+    newNode = EigLab::find(valid, 1).col(0);
   }
-  valid = valid && (distances <= 1);
-  ArrayXPI newNode = EigLab::find(valid, 1).col(0);
+  else {
+    // Get face centers
+    ArrayXXPS centers = ArrayXXPS::Zero(faces.rows()*element.rows(), this->numDims);
+    for (PetscInt el = 0; el < element.rows(); el++) {
+      for (PetscInt face = 0; face < faces.rows(); face++) {
+        for (PetscInt nd = 0; nd < faces.cols(); nd++) {
+          centers.row(el*faces.rows() + face) += node.row(element(el, faces(face, nd))).array();
+        }
+      }
+    }
+    centers /= faces.rows();
 
-  switch (TYPE)
-  {
+    // Get distances from center point and check limits in each direction
+    for (PetscInt i = 0; i < numDims; i++) {
+      distances += ((centers - center(i))/radius(i)).square();
+      valid = valid && (centers >= limits(i,0)) && (centers <= limits(i,1));
+    }
+    valid = valid && (distances <= 1);
+    newFace = EigLab::find(valid, 1).col(0);
+  }
+
+  switch (TYPE) {
     case SUPPORT: {
       supports.conservativeResize(suppNode.rows()+newNode.rows(), numDims);
       for (PetscInt i = 0; i < numDims; i++)
@@ -99,19 +161,37 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
       break;
     }
     case LOAD: {
-      // Treat loads as distributed (reduce load magnitude on edge nodes)
-      ArrayXPS factors = ArrayXPS::Zero(nLocNode);
-      for (PetscInt el = 0; el < this->element.size(); el++){
-        PetscInt nd = *(element.data()+el);
-        if (nd < nLocNode)
-          factors[nd]++;
-      }
-      EigLab::IndRemove(factors, newNode, 1);
       loads.conservativeResize(loadNode.rows()+newNode.rows(), numDims);
       for (PetscInt i = 0; i < numDims; i++)
-        loads.block(loadNode.rows(), i, newNode.rows(), 1) = values(i)*factors;
+        loads.block(loadNode.rows(), i, newNode.rows(), 1) = values(i);
       loadNode.conservativeResize(loadNode.rows()+newNode.rows());
       loadNode.segment(loadNode.rows()-newNode.rows(), newNode.rows()) = newNode;
+      break;
+    }
+    case PRESSURE: {
+      // Start from end of current list
+      PetscInt ind = loadNode.rows();
+      // Allocate enough for every node identified to be local
+      loads.conservativeResize(loadNode.rows()+faces.size(), numDims);
+      loadNode.conservativeResize(loadNode.rows()+faces.size());
+      // Loop over every face selected
+      for (PetscInt face = 0; face < newFace.rows(); face++) {
+        PetscInt el = newFace(face) / faces.rows();
+        PetscInt elface = newFace(face) % faces.rows();
+        // Loop over every node in that face
+        for (PetscInt nd = 0; nd < faces.cols(); nd++) {
+          PetscInt inode = element(el, faces(elface, nd));
+          // If local node, at it to list 
+          if (inode < nLocNode) {
+            loadNode(ind) = inode;
+            loads.row(ind) = values;
+            ind++;
+          }
+        }
+      }
+      // Trim extra space from nodes that were not local
+      loads.conservativeResize(ind, numDims);
+      loadNode.conservativeResize(ind);
       break;
     }
     case MASS: {
@@ -810,6 +890,8 @@ PetscErrorCode TopOpt::Def_BC()
         TYPE = SUPPORT;
       else if (!line.compare(0,4,"Load"))
         TYPE = LOAD;
+      else if (!line.compare(0,5,"Press"))
+        TYPE = PRESSURE;
       else if (!line.compare(0,4,"Mass"))
         TYPE = MASS;
       else if (!line.compare(0,6,"Spring"))
