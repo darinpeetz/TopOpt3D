@@ -131,7 +131,7 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
     Eigen::VectorXd du = Eigen::VectorXd::Zero(DE);
     du(dof) = 1;
     // Loop through quadrature points
-    for (int qp = 0; qp < 4; qp++)
+    for (int qp = 0; qp < pow(2,numDims); qp++)
       dksdu += topOpt->W[qp]*topOpt->GT[qp]*sigtos(topOpt->d*topOpt->B[qp]*du)
         *  topOpt->G[qp]*topOpt->detJ;
     }
@@ -302,7 +302,7 @@ PetscErrorCode Stability::StressFnc(TopOpt *topOpt)
     }
 
     /// Loop over quadrature points
-    for (short qp = 0; qp < 4; qp++) {
+    for (short qp = 0; qp < pow(2, topOpt->numDims); qp++) {
       ks += topOpt->W[qp] * topOpt->GT[qp]
         * sigtos(topOpt->d * topOpt->B[qp] * u)
         * topOpt->G[qp] * topOpt->detJ;
