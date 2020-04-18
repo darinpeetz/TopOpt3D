@@ -550,6 +550,9 @@ PetscErrorCode TopOpt::CreateMesh(VectorXPS dimensions, ArrayXPI Nel,
   }
 
   // Create the geometric coarse-grid restrictions
+  PetscInt mg_levels = (PetscInt)std::log2(Nel.segment(0, this->numDims).minCoeff());
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_levels",
+                            &mg_levels, NULL); CHKERRQ(ierr);
   ArrayXPI I[mg_levels-1], J[mg_levels-1], cList[mg_levels-1];
   Eigen::Array<PetscScalar, -1, 1> K[mg_levels-1];
   ierr = Create_Interpolations(first, last, Nel, I, J, K, cList, mg_levels);
@@ -673,6 +676,9 @@ PetscErrorCode TopOpt::CreateMesh(VectorXPS dimensions, ArrayXPI Nel,
   }
 
   /// Interpolation matrix assembly
+  PetscInt min_size = cList[mg_levels-2].size();
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_coarse_eq_limit",
+                            &min_size, NULL); CHKERRQ(ierr);
   ierr = Assemble_Interpolation(I, J, K, cList, mg_levels, min_size);
   if (this->verbose >= 3) {
     ierr = PetscFPrintf(this->comm, this->output, "Successfully assembled "

@@ -208,6 +208,12 @@ PetscErrorCode TopOpt::FEInitialize()
   ierr = PCSetFromOptions(pc); CHKERRQ(ierr);
   // Set up geometric multigrid hierarchy if desired
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
+  if (!strcmp(pctype, PCGAMG)) { // Set a default coarsening threshold
+    PetscReal threshold = 0.003;
+    ierr = PetscOptionsGetReal(NULL, "kuf_", "-pc_gamg_threshold",
+                               &threshold, NULL); CHKERRQ(ierr);
+    ierr = PCGAMGSetThreshold(pc, &threshold, 1); CHKERRQ(ierr);
+  }
   if (!strcmp(pctype, PCMG)) {
     ierr = PCMGSetLevels(pc, this->PR.size()+1, NULL); CHKERRQ(ierr);
     ierr = PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH); CHKERRQ(ierr);
@@ -325,10 +331,13 @@ PetscErrorCode TopOpt::FESolve()
 
   // Set near nullspace and strength of connection metric for gamg
   if (!strcmp(pctype,PCGAMG)) {
+    // Allow for increasing number of levels if number not specified
+    PetscInt levels=30;
+    ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_levels", &levels, NULL);
+      CHKERRQ(ierr);
+    ierr = PCGAMGSetNlevels(pc, levels); CHKERRQ(ierr);
     ierr = PCSetCoordinates(pc, this->numDims, this->nLocNode, this->node.data());
       CHKERRQ(ierr);
-    PetscReal threshold = std::pow(0.05, this->numDims);
-    ierr = PCGAMGSetThreshold(pc, &threshold, 1); CHKERRQ(ierr);
   }
 
   // Print out the multigrid information

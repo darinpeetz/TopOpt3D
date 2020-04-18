@@ -186,9 +186,9 @@ PetscErrorCode TopOpt::Create_Interpolation(ArrayXPI &first, ArrayXPI &last,
  * @return ierr: PetscErrorCode
  * 
  *******************************************************************/
-int TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
-                                   ArrayXPI *cList, PetscInt mg_levels,
-                                   PetscInt min_size)
+PetscErrorCode TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J,
+                                              ArrayXPS *K, ArrayXPI *cList,
+                                              PetscInt mg_levels, PetscInt min_size)
 {
   PetscErrorCode ierr = 0;
   // Preallocation arrays
@@ -208,9 +208,6 @@ int TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
   this->MG_comms[0] = this->comm;
   // How the dof are split between processors at each level
   ArrayXPI nddist = this->nddist;
-
-  if (min_size <= 0)
-    min_size = cList[mg_levels-2].size();
   
   for (int i = 0; i < mg_levels-1; i++) {
     // Sort all the coarse nodes to determine their numbers at this level

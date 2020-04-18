@@ -40,11 +40,9 @@ int main(int argc, char **args)
   ArrayXPI Nel;
   double Rmin=1.5, Rmax=3;
 
-  bool Normalization = false, Reorder_Mesh = true;
-  PetscInt mg_levels = 20, min_size = -1;
-  ierr = topOpt->Def_Param(optmma, Dimensions, Nel, Rmin, Rmax, Normalization,
-                    Reorder_Mesh, mg_levels, min_size); CHKERRQ(ierr);
-  mg_levels = std::max(mg_levels, 2);
+  PetscBool Normalization = PETSC_FALSE, Reorder_Mesh = PETSC_TRUE;
+  ierr = topOpt->Def_Param(optmma, Dimensions, Nel, Rmin, Rmax,
+                           Normalization, Reorder_Mesh); CHKERRQ(ierr);
   ierr = topOpt->Set_Funcs(); CHKERRQ(ierr);
   ierr = topOpt->Get_CL_Options(); CHKERRQ(ierr);
 
@@ -58,8 +56,8 @@ int main(int argc, char **args)
       pind++;
   }
   else {
-    ierr = topOpt->CreateMesh(Dimensions, Nel, Rmin, Rmax, Reorder_Mesh, 
-                              mg_levels, min_size); CHKERRQ(ierr);
+    ierr = topOpt->CreateMesh(Dimensions, Nel, Rmin, Rmax,
+                              Reorder_Mesh); CHKERRQ(ierr);
     topOpt->Def_BC();
 
     Eigen::Array<bool, -1, 1> elemValidity =

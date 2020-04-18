@@ -229,15 +229,13 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
  * @param Normalization: flag to calculate all possible objective
  *                       values upon termination
  * @param Reorder_Mesh: flag indicating if mesh should be redistributed
- * @param mg_levels: Number of levels to use in the GMG hierarchy
- * @param min_size: minimum matrix size per processor
  * 
  * @return ierr: PetscErrorCode
  * 
  *******************************************************************/
 PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
-               ArrayXPI &Nel, PetscScalar &Rmin, PetscScalar &Rmax, bool &Normalization,
-               bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size)
+                                 ArrayXPI &Nel, PetscScalar &Rmin, PetscScalar &Rmax,
+                                 PetscBool &Normalization, PetscBool &Reorder_Mesh)
 {
   PetscErrorCode ierr = 0;
 
@@ -397,37 +395,21 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
         file >> line;
         optmma->Set_Step_Limit(strtod(line.c_str(), NULL));
       }
-      else if (!line.compare(0,13,"NORMALIZATION"))
-      {
-        Normalization = true;
-      }
-      else if (!line.compare(0,18,"NO_MESH_REORDERING"))
-      {
-        Reorder_Mesh = false;
-      }
-      else if (!line.compare(0,9,"MG_LEVELS"))
-      {
+      else if (!line.compare(0,13,"NORMALIZATION")) {
         file >> line;
-        mg_levels = strtol(line.c_str(), NULL, 0);
+        if (line[0] == 'Y' || line[0] == 'y' || line[0] == 'T' || line[0] == 't')
+          Normalization = PETSC_TRUE;
+        else
+          Normalization = PETSC_FALSE;
       }
-      else if (!line.compare(0,15,"MG_MIN_MAT_SIZE"))
-      {
+      else if (!line.compare(0,15,"MESH_REORDERING")) {
         file >> line;
-        min_size = strtol(line.c_str(), NULL, 0);
+        if (line[0] == 'Y' || line[0] == 'y' || line[0] == 'T' || line[0] == 't')
+          Reorder_Mesh = PETSC_TRUE;
+        else
+          Reorder_Mesh = PETSC_FALSE;
       }
-      else if (!line.compare(0,14,"MG_COARSE_SIZE"))
-      {
-        file >> line;
-        PetscInt c_size = strtol(line.c_str(), NULL, 0);
-        PetscScalar temp = log2(Nel.size());
-        for (PetscInt i = 0; i < Nel.size(); i++)
-          temp += log2(Nel(i)+1);
-        temp -= log2(c_size);
-        temp /= Nel.size();
-        mg_levels = ceil(temp)+1;
-      }
-      else if (!line.compare(0,8,"SMOOTHER"))
-      {
+      else if (!line.compare(0,8,"SMOOTHER")) {
         string smoother; file >> smoother;
         for (string::size_type i = 0; i < smoother.length(); ++i)
           smoother[i] = toupper(smoother[i]);
@@ -457,6 +439,10 @@ PetscErrorCode TopOpt::Def_Param(MMA *optmma, Eigen::VectorXd &Dimensions,
     }
   }
 
+  // Override at command line
+  ierr = PetscOptionsGetBool(NULL, NULL, "-mesh_reordering", &Reorder_Mesh, NULL); CHKERRQ(ierr);
+  ierr = PetscOptionsGetBool(NULL, NULL, "-normalization", &Normalization, NULL); CHKERRQ(ierr);
+  
   return ierr;
 }
 

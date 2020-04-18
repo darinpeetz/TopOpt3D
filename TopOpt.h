@@ -206,8 +206,8 @@ public:
 
   // Parsing the input file
   PetscErrorCode Def_Param(MMA *optmma, VectorXPS &Dimensions, ArrayXPI &Nel,
-                 PetscScalar &Rmin, PetscScalar &Rmax, bool &Normalization,
-                 bool &Reorder_Mesh, PetscInt &mg_levels, PetscInt &min_size);
+                           PetscScalar &Rmin, PetscScalar &Rmax,
+                           PetscBool &Normalization, PetscBool &Reorder_Mesh);
   PetscErrorCode Get_CL_Options();
   PetscErrorCode Set_Funcs();
   PetscErrorCode Domain(MatrixXPS &Points, Eigen::Array<bool, -1, 1> &elemValidity,
@@ -241,8 +241,7 @@ public:
                                  ArrayXPS &K, bool scale);
   PetscErrorCode LoadMesh(VectorXPS &xIni);
   PetscErrorCode CreateMesh(VectorXPS dimensions, ArrayXPI Nel, PetscScalar Rmin,
-                            PetscScalar Rmax, bool Reorder_Mesh, 
-                            PetscInt mg_levels, PetscInt min_size);
+                            PetscScalar Rmax, bool Reorder_Mesh);
   PetscErrorCode Create_Interpolations(PetscInt *first, PetscInt *last, ArrayXPI Nel,
                                        ArrayXPI *I, ArrayXPI *J, ArrayXPS *K,
                                        ArrayXPI *cList, PetscInt &mg_levels);
