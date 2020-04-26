@@ -284,6 +284,7 @@ public:
   PetscErrorCode IsolateRigid();
   PetscErrorCode SetMatNullSpace();
   PetscErrorCode GetNearNullSpace(Vec **NullVecs);
+  PetscErrorCode SetUpHybridPC(PC pc);
 
   // Apply filter for chain rule
   PetscErrorCode Chain_Filter(Vec dfdE, Vec dfdV);
