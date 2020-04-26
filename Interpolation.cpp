@@ -52,19 +52,14 @@ PetscErrorCode TopOpt::Create_Interpolations(PetscInt *first, PetscInt *last,
 
   // Check if hierarchy info was overriden at command line
   PetscBool levelSet, coarseEQSet;
-  PetscInt levels=20, coarseEQ;
+  PetscInt levels=20, coarseEQ=10;
   ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_levels", &levels, &levelSet);
     CHKERRQ(ierr);
   if (levelSet == PETSC_TRUE) {
     mg_levels = levels;
   }
-  else {
-    ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_coarse_eq_limit", 
-                              &coarseEQ, &coarseEQSet); CHKERRQ(ierr);
-    if (coarseEQSet == PETSC_FALSE) {
-      coarseEQ = 1;
-    }
-  }
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_coarse_eq_limit", 
+                            &coarseEQ, &coarseEQSet); CHKERRQ(ierr);
 
   for (int i = 0; i < mg_levels-1; i++) {  
     // Create the interpolation triplets for this restriction
