@@ -333,7 +333,8 @@ PetscErrorCode PRINVIT::Compute()
 
   // The actual computation loop
   it = 0;
-  while ((it++/(nev_conv+1)) < maxit) {
+  PetscInt lastConvIt = it;
+  while (it++ - lastConvIt  < maxit) {
     eps_sub.compute(G.block(0,0,j,j));
     W = eps_sub.eigenvectors();
     S = eps_sub.eigenvalues();
@@ -361,6 +362,7 @@ PetscErrorCode PRINVIT::Compute()
           ((std::abs(theta - lambda(nev_conv))/theta > 1e-14) || (it/(nev_conv+1) < 10))) // stagnation
            || (j <= 1)) {
         lambda(nev_conv) = theta;
+        lastConvIt = it;
         rnorm_old = rnorm;
         break;
       }
@@ -466,10 +468,10 @@ PetscErrorCode PRINVIT::Compute()
     ierr = PetscLogEventEnd(EIG_Expand, 0, 0, 0, 0); CHKERRQ(ierr);
 
     j++;
-    if ((it/(nev_conv+1)) == maxit && eps/base_eps < 1000) {
+    if (lastConvIt - it == maxit && eps/base_eps < 1000) {
       if (this->verbose >= 1)
         PetscFPrintf(comm, output, "Only %i converged eigenvalues in %i iterations, "
-                     "increasing tolerance to %1.2g\n", nev_conv, maxit, eps*=10);
+                     "increasing tolerance to %1.2g\n", nev_conv, it, eps*=10);
       maxit += base_it;
     }
   }
