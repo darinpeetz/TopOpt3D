@@ -244,8 +244,14 @@ PetscErrorCode TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J,
     fill(onDiag, onDiag+gRows, 0);
     fill(offDiag, offDiag+gRows, 0);
 
+    // If we're using gamg as as the coarse solver, let coarse grid be parallel
+    char coarse[100];
+    PetscInt len = 100;
+    PetscBool set;
+    ierr = PetscOptionsGetString(NULL, NULL, "-kuf_mg_coarse_pc_type",
+                                 coarse, len, &set); CHKERRQ(ierr);
     // Coarsest interpolator works a little different
-    if (i == mg_levels-2) {
+    if (i == mg_levels-2 && (set != PETSC_TRUE || strcmp(coarse, "gamg"))) {
       // Set matrix size
       lCols.setConstant(gCols); lCols(0) = 0;
       ierr = MatSetSizes(this->PR[i], numDims*(lRows(myid+1)-lRows(myid)),
@@ -305,9 +311,11 @@ PetscErrorCode TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J,
       MPI_Iallreduce(MPI_IN_PLACE, onDiag, gRows, MPI_PETSCINT, MPI_SUM, comm, &on_req);
       MPI_Iallreduce(MPI_IN_PLACE, offDiag, gRows, MPI_PETSCINT, MPI_SUM, comm, &off_req);
 
-      // Update I array of next level
-      for (int j = 0; j < I[i+1].size(); j++)
-        I[i+1](j) = invind(I[i+1](j));
+      // Update I array of next level (unless we're already at coarse grid)
+      if (i < mg_levels - 2) {
+        for (int j = 0; j < I[i+1].size(); j++)
+          I[i+1](j) = invind(I[i+1](j));
+      }
 
       MPI_Wait(&on_req, MPI_STATUS_IGNORE);
       MPI_Wait(&off_req, MPI_STATUS_IGNORE);
