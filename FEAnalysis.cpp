@@ -14,6 +14,51 @@ typedef Eigen::Array<PetscScalar, -1, 1> ArrayXPS;
 std::string MGTypes[4] = {"MULTIPLICATIVE", "ADDITIVE", "FULL", "KAKSKADE"};
 
 /********************************************************************
+ * Construct the global near-nullspace vectors
+ * 
+ * @param NullVecs: A pointer to nullspace vectors on return
+ * 
+ * @return ierr: PetscErrorCode
+ * 
+ *******************************************************************/
+PetscErrorCode TopOpt::GetNearNullSpace(Vec **NullVecs)
+{
+  PetscErrorCode ierr = 0;
+
+  // Set the matrix nullspace (particularly important if no Dirichlet BC)
+  PetscInt nRBM = (this->numDims)*(this->numDims+1)/2;
+  ierr = VecDuplicateVecs(this->U, nRBM, NullVecs); CHKERRQ(ierr);
+  Eigen::InnerStride<-1> skip(numDims);
+  Bmap RBMMap(NULL, 0, skip);
+  PetscScalar *p_Vec;
+  PetscInt mode = 0;
+  // Translation modes
+  for (PetscInt i = 0; i < this->numDims; i++) {
+      ierr = VecSet((*NullVecs)[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray((*NullVecs)[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap.setOnes();
+      ierr = VecRestoreArray((*NullVecs)[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+  }
+  // Rotation modes
+  for (PetscInt i = 0; i < this->numDims; i++) {
+    for (PetscInt j = i+1; j < this->numDims; j++) {
+      ierr = VecSet((*NullVecs)[mode], 0); CHKERRQ(ierr);
+      ierr = VecGetArray((*NullVecs)[mode], &p_Vec); CHKERRQ(ierr);
+      new (&RBMMap) Bmap(p_Vec + i, this->node.rows(), skip);
+      RBMMap = this->node.col(j);
+      new (&RBMMap) Bmap(p_Vec + j, this->node.rows(), skip);
+      RBMMap = -this->node.col(i);
+      ierr = VecRestoreArray((*NullVecs)[mode], &p_Vec); CHKERRQ(ierr);
+      mode++;
+    }
+  }
+
+  return ierr;
+}
+
+/********************************************************************
  * Set up the stiffness matrix and solver context
  * 
  * @return ierr: PetscErrorCode
@@ -348,11 +393,11 @@ PetscErrorCode TopOpt::FESolve()
     ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
 
     // Better coarse solver defaults
-    char ign[100];
-    PetscInt ore = 100;
+    char coarse[100];
+    PetscInt len = 100;
     PetscBool set;
     ierr = PetscOptionsGetString(NULL, NULL, "-kuf_mg_coarse_pc_type",
-                                 ign, ore, &set); CHKERRQ(ierr);
+                                 coarse, len, &set); CHKERRQ(ierr);
     if (set == PETSC_TRUE) {
       ierr = PetscFPrintf(this->comm, this->output, "Coarse solver overridden"
                           " at command line\n"); CHKERRQ(ierr);
@@ -394,6 +439,33 @@ PetscErrorCode TopOpt::FESolve()
       }
     }
 
+    // Concise smoother information
+    if (this->verbose == 2) {
+      ierr = PCMGGetSmoother(pc, 1, &smooth_ksp); CHKERRQ(ierr);
+      ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
+      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+      ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
+      ierr = PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
+                          "smoothing with %s preconditioning\n",
+                          smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+    }
+    // Verbose smoother information
+    if (this->verbose > 2) {
+      PCMGType mg_type;
+      ierr = PCMGGetType(pc, &mg_type); CHKERRQ(ierr);
+      ierr = PetscFPrintf(comm, output, "Multigrid is cycling through levels using"
+                          " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
+      for (PetscInt i = levels-1; i > 0; i--) {
+          ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
+          ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
+          ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+          ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
+          ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
+                              "smoothing with %s preconditioning\n", levels-i,
+                              smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+
+      }
+    }
     // Coarse grid
     if (this->verbose >= 2) {
       ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
@@ -416,27 +488,129 @@ PetscErrorCode TopOpt::FESolve()
                             smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
       }
     }
-    // Concise smoother information
-    if (this->verbose == 2) {
-      ierr = PetscFPrintf(comm, output, "Multigrid preconditioning is using %s "
-                          "smoothing with %s preconditioning\n",
-                          smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
-    }
-    // Verbose smoother information
-    if (this->verbose > 2) {
-      PCMGType mg_type;
-      ierr = PCMGGetType(pc, &mg_type); CHKERRQ(ierr);
-      ierr = PetscFPrintf(comm, output, "Multigrid is cycling through levels using"
-                          " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
-      for (PetscInt i = 1; i < levels; i++) {
-          ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-          ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
-          ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-          ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
-          ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
-                              "smoothing with %s preconditioning\n", i,
-                              smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+    
+    if (!strcmp(pctype,PCMG) && (set == PETSC_TRUE && !strcmp(coarse, "gamg"))) {
+      // Using GMG for fine levels and GAMG for coarse levels
+      ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+      ierr = KSPSetType(smooth_ksp, KSPPREONLY); CHKERRQ(ierr);
+      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+      Mat A;
+      ierr = KSPGetOperators(smooth_ksp, &A, NULL); CHKERRQ(ierr);
+      ierr = PCSetType(smooth_pc, PCGAMG); CHKERRQ(ierr);
+      ierr = PCReset(smooth_pc); CHKERRQ(ierr);
+      PetscReal threshold = 0.003;
+      ierr = PetscOptionsGetReal(NULL, "kuf_mg_coarse_", "-pc_gamg_threshold",
+                                &threshold, NULL); CHKERRQ(ierr);
+      ierr = PCGAMGSetThreshold(smooth_pc, &threshold, 1); CHKERRQ(ierr);
 
+      // Project the Nullspace vectors to the coarse level
+      Vec *NullVecs;
+      ierr = GetNearNullSpace(&NullVecs); CHKERRQ(ierr);
+      PetscInt nRBM = (this->numDims)*(this->numDims+1)/2;
+      for (PetscInt i = levels-1; i > 0; i--) {
+        Mat R;
+        ierr = PCMGGetInterpolation(pc, i, &R); CHKERRQ(ierr);
+        Vec *coarseVecs, temp1, temp2, ones, scale;
+        PetscInt size1, size2;
+        ierr = MatCreateVecs(R, &temp1, &temp2); CHKERRQ(ierr);
+        ierr = VecGetSize(temp1, &size1); CHKERRQ(ierr);
+        ierr = VecGetSize(temp2, &size2);
+        if (size1 > size2) {
+          ierr = VecDuplicateVecs(temp2, nRBM, &coarseVecs); CHKERRQ(ierr);
+          ones = temp1;
+          scale = temp2;
+        } else {
+          ierr = VecDuplicateVecs(temp1, nRBM, &coarseVecs); CHKERRQ(ierr);
+          ones = temp2;
+          scale = temp1;
+        }
+        ierr = VecSet(ones, 1); CHKERRQ(ierr);
+        ierr = MatRestrict(R, ones, scale); CHKERRQ(ierr);
+        for (PetscInt RBM = 0; RBM < nRBM; RBM++) {
+          ierr = MatRestrict(R, NullVecs[RBM], coarseVecs[RBM]); CHKERRQ(ierr);
+          ierr = VecPointwiseDivide(coarseVecs[RBM], coarseVecs[RBM], scale); CHKERRQ(ierr);
+        }
+        ierr = VecDestroy(&temp1); CHKERRQ(ierr);
+        ierr = VecDestroy(&temp2); CHKERRQ(ierr);
+        ierr = VecDestroyVecs(nRBM, &NullVecs); CHKERRQ(ierr);
+        NullVecs = coarseVecs;
+      }
+      // Normalize the nullspace vectors
+      PetscScalar dots[nRBM-1];
+      for (PetscInt mode = 0; mode < nRBM; mode++) {
+        ierr = VecMDot(NullVecs[mode], mode, NullVecs, dots); CHKERRQ(ierr);
+        for (PetscInt i = 0; i < mode; i++) {dots[i] *= -1;}
+        ierr = VecMAXPY(NullVecs[mode], mode, dots, NullVecs); CHKERRQ(ierr);
+        ierr = VecNormalize(NullVecs[mode], NULL); CHKERRQ(ierr);
+      }
+
+      // Set the near nullspace for the coarse GMG operator
+      // Mat A;
+      ierr = KSPSetOperators(smooth_ksp, A, A); CHKERRQ(ierr);
+      MatNullSpace Rigid;
+      ierr = MatNullSpaceCreate(this->comm, PETSC_FALSE, nRBM, NullVecs, &Rigid); CHKERRQ(ierr);
+      ierr = MatSetNearNullSpace(A, Rigid); CHKERRQ(ierr);
+      ierr = MatNullSpaceDestroy(&Rigid); CHKERRQ(ierr);
+      ierr = VecDestroyVecs(nRBM, &NullVecs); CHKERRQ(ierr);
+
+      PetscInt lvls=30;
+      ierr = PetscOptionsGetInt(NULL, "kuf_mg_coarse_", "-pc_gamg_levels", &lvls, NULL);
+        CHKERRQ(ierr);
+      ierr = PCGAMGSetNlevels(smooth_pc, lvls); CHKERRQ(ierr);
+      ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+
+      // Describe the sub GAMG preconditioner
+      ierr = PCMGGetLevels(smooth_pc, &lvls); CHKERRQ(ierr);
+      KSP subKSP;
+      PC subPC;
+      // Concise smoother information
+      if (this->verbose == 2) {
+        ierr = PCMGGetSmoother(smooth_pc, 1, &subKSP); CHKERRQ(ierr);
+        ierr = KSPGetType(subKSP, &smooth_ksp_type); CHKERRQ(ierr);
+        ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
+        ierr = PCGetType(subPC, &smooth_pc_type); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "GAMG coarse preconditioning is using %s "
+                            "smoothing with %s preconditioning\n",
+                            smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+      }
+      // Verbose smoother information
+      if (this->verbose > 2) {
+        PCMGType mg_type;
+        ierr = PCMGGetType(smooth_pc, &mg_type); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "GAMG coarse multigrid is cycling through levels using"
+                            " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
+        for (PetscInt i = lvls-1; i > 0; i--) {
+            ierr = PCMGGetSmoother(smooth_pc, i, &subKSP); CHKERRQ(ierr);
+            ierr = KSPGetType(subKSP, &smooth_ksp_type); CHKERRQ(ierr);
+            ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
+            ierr = PCGetType(subPC, &smooth_pc_type); CHKERRQ(ierr);
+            ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
+                                "smoothing with %s preconditioning\n", levels+lvls-i-1,
+                                smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+
+        }
+      }
+      // Coarse grid
+      if (this->verbose >= 2) {
+        ierr = PCMGGetCoarseSolve(smooth_pc, &subKSP); CHKERRQ(ierr);
+        ierr = KSPGetType(subKSP, &smooth_ksp_type); CHKERRQ(ierr);
+        ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
+        ierr = PCGetType(subPC, &smooth_pc_type); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "GAMG coarse grid is using %s "
+                            "with %s preconditioning\n",
+                            smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+        PetscBool same;
+        ierr = PetscObjectTypeCompare((PetscObject) subPC, PCBJACOBI, &same); CHKERRQ(ierr);
+        if (same == PETSC_TRUE) {
+          KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
+          ierr = PCBJacobiGetSubKSP(subPC, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+          ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+          ierr = KSPGetType(sub_ksp[0], &smooth_ksp_type); CHKERRQ(ierr);
+          ierr = PCGetType(sub_pc, &smooth_pc_type); CHKERRQ(ierr);
+          ierr = PetscFPrintf(comm, output, "Individual blocks are using %s "
+                              "with %s preconditioning\n",
+                              smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
+        }
       }
     }
   }
