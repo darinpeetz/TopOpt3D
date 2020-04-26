@@ -283,6 +283,7 @@ public:
   PetscErrorCode MatIntFnc(const VectorXPS &y);
   PetscErrorCode IsolateRigid();
   PetscErrorCode SetMatNullSpace();
+  PetscErrorCode GetNearNullSpace(Vec **NullVecs);
 
   // Apply filter for chain rule
   PetscErrorCode Chain_Filter(Vec dfdE, Vec dfdV);
