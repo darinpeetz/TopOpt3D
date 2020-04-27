@@ -1,7 +1,6 @@
 #include <iostream>
 #include <cmath>
 #include <fstream>
-#include <ctime>
 #include <Eigen/Eigen>
 #include <numeric>
 #include <unsupported/Eigen/KroneckerProduct>
@@ -676,8 +675,8 @@ PetscErrorCode TopOpt::CreateMesh(VectorXPS dimensions, ArrayXPI Nel,
   }
 
   /// Interpolation matrix assembly
-  PetscInt min_size = cList[mg_levels-2].size();
-  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_coarse_eq_limit",
+  PetscInt min_size = std::min(cList[mg_levels-2].size(), 5e3);
+  ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_proc_eq_limit",
                             &min_size, NULL); CHKERRQ(ierr);
   ierr = Assemble_Interpolation(I, J, K, cList, mg_levels, min_size);
   if (this->verbose >= 3) {
