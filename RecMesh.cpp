@@ -675,7 +675,7 @@ PetscErrorCode TopOpt::CreateMesh(VectorXPS dimensions, ArrayXPI Nel,
   }
 
   /// Interpolation matrix assembly
-  PetscInt min_size = std::min(cList[mg_levels-2].size(), 5e3);
+  PetscInt min_size = std::min((int)cList[mg_levels-2].size(), (int)5e3);
   ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_mg_proc_eq_limit",
                             &min_size, NULL); CHKERRQ(ierr);
   ierr = Assemble_Interpolation(I, J, K, cList, mg_levels, min_size);
