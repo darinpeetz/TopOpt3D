@@ -240,13 +240,11 @@ PetscErrorCode TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J,
     fill(offDiag, offDiag+gRows, 0);
 
     // If we're using gamg as as the coarse solver, let coarse grid be parallel
-    char coarse[100];
-    PetscInt len = 100;
-    PetscBool set;
-    ierr = PetscOptionsGetString(NULL, NULL, "-kuf_mg_coarse_pc_type",
-                                 coarse, len, &set); CHKERRQ(ierr);
+    PetscBool set, hybrid=PETSC_FALSE;
+    ierr = PetscOptionsGetBool(NULL, NULL, "-use_hybrid_MG",
+                               &hybrid, &set); CHKERRQ(ierr);
     // Coarsest interpolator works a little different
-    if (i == mg_levels-2 && (set != PETSC_TRUE || strcmp(coarse, "gamg"))) {
+    if (i == mg_levels-2 && !hybrid) {
       // Set matrix size
       lCols.setConstant(gCols); lCols(0) = 0;
       ierr = MatSetSizes(this->PR[i], numDims*(lRows(myid+1)-lRows(myid)),
