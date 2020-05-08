@@ -468,7 +468,7 @@ PetscErrorCode TopOpt::FEAssemble()
   // Apply Spring B.C.'s
   ierr = MatDiagonalSet(this->K, this->spKVec, ADD_VALUES); CHKERRQ(ierr);
   // Apply Dirichlet B.C.'s
-  ierr = MatZeroRowsColumns(this->K, fixedDof.size(), fixedDof.data(), 1.0, U, F);
+  ierr = MatZeroRowsColumns(this->K, fixedDof.size(), fixedDof.data(), 1.0, U, NULL);
     CHKERRQ(ierr);
   // Put a 1 on the diagonal wherever a node is fully detached from the structure
   Vec Diagonal; PetscScalar *p_Diag;
