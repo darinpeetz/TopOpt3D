@@ -25,7 +25,7 @@ PetscErrorCode TopOpt::MatIntFnc(const Eigen::VectorXd &design)
                         "to material parameters\n"); CHKERRQ(ierr);
   }
 
-  PetscScalar eps = 0; // Minimum stiffness
+  PetscScalar eps = 1e-10; // Minimum stiffness
   PetscScalar *p_x, *p_y; // Pointers
 
   // Apply the filter to design variables
