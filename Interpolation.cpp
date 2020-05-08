@@ -241,8 +241,7 @@ PetscErrorCode TopOpt::Assemble_Interpolation(ArrayXPI *I, ArrayXPI *J,
 
     // If we're using gamg as as the coarse solver, let coarse grid be parallel
     PetscBool set, hybrid=PETSC_FALSE;
-    ierr = PetscOptionsGetBool(NULL, NULL, "-use_hybrid_MG",
-                               &hybrid, &set); CHKERRQ(ierr);
+    ierr = PetscOptionsGetBool(NULL, NULL, "-use_hybrid_MG", &hybrid, &set); CHKERRQ(ierr);
     // Coarsest interpolator works a little different
     if (i == mg_levels-2 && !hybrid) {
       // Set matrix size
