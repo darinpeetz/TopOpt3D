@@ -163,7 +163,7 @@ PetscErrorCode TopOpt::SetUpHybridPC(PC pc)
   }
   // Verbose smoother information
   if (this->verbose > 2) {
-    PCMGType mg_type;
+    PCMGType mg_type; PetscInt Asize;
     ierr = PCMGGetType(smooth_pc, &mg_type); CHKERRQ(ierr);
     ierr = PetscFPrintf(comm, output, "GAMG coarse multigrid is cycling through levels using"
                         " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
@@ -172,8 +172,10 @@ PetscErrorCode TopOpt::SetUpHybridPC(PC pc)
         ierr = KSPGetType(subKSP, &smooth_ksp_type); CHKERRQ(ierr);
         ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
         ierr = PCGetType(subPC, &smooth_pc_type); CHKERRQ(ierr);
-        ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
-                            "smoothing with %s preconditioning\n", levels+lvls-i-1,
+        ierr = PCGetOperators(subPC, &A, NULL); CHKERRQ(ierr);
+        ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "Multigrid level %i (size %i) is using %s "
+                            "smoothing with %s preconditioning\n", levels+lvls-i-1, Asize,
                             smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
 
     }
