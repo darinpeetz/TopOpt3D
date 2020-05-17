@@ -515,7 +515,7 @@ PetscErrorCode TopOpt::FESolve()
   // Get the precondtioner and make modifications if necessary
   PC pc; KSPType ksptype; PCType pctype;
   PetscBool hybrid=PETSC_FALSE;
-  PetscInt levels=0;
+  PetscInt levels=-1;
   ierr = KSPGetType(KUF, &ksptype); CHKERRQ(ierr);
   ierr = KSPGetPC(KUF, &pc); CHKERRQ(ierr);
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
@@ -527,6 +527,7 @@ PetscErrorCode TopOpt::FESolve()
   double tSetupStart = MPI_Wtime();
   // Set near nullspace and strength of connection metric for gamg
   if (!strcmp(pctype,PCGAMG)) {
+    levels = 30;
     // Allow for increasing number of levels if number not specified
     ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_levels", &levels, NULL);
       CHKERRQ(ierr);
@@ -685,22 +686,24 @@ PetscErrorCode TopOpt::FESolve()
   // Report cost of solve if requested
   if (this->myid == 0 && this->verbose >= 2) {
     PetscInt allLevels=levels;
-    KSP coarseKSP; PC coarsePC; Mat A; PetscInt Asize;
-    ierr = PCMGGetCoarseSolve(pc, &coarseKSP); CHKERRQ(ierr);
-    ierr = KSPGetPC(coarseKSP, &coarsePC); CHKERRQ(ierr);
+    KSP coarseKSP; PC coarsePC; Mat A; PetscInt Asize=this->numDims*this->nNode;
+    if (levels >= 0) {
+      ierr = PCMGGetCoarseSolve(pc, &coarseKSP); CHKERRQ(ierr);
+      ierr = KSPGetPC(coarseKSP, &coarsePC); CHKERRQ(ierr);
 
-    // If using AMG on coarse grid, report that too
-    if (hybrid) {
-      KSP subKSP; PC subPC; PetscInt lvls;
-      ierr = PCMGGetLevels(coarsePC, &lvls); CHKERRQ(ierr);
-      allLevels += lvls-1;
-      ierr = PCMGGetCoarseSolve(coarsePC, &subKSP); CHKERRQ(ierr);
-      ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
-      coarsePC = subPC;
+      // If using AMG on coarse grid, report that too
+      if (hybrid) {
+        KSP subKSP; PC subPC; PetscInt lvls;
+        ierr = PCMGGetLevels(coarsePC, &lvls); CHKERRQ(ierr);
+        allLevels += lvls-1;
+        ierr = PCMGGetCoarseSolve(coarsePC, &subKSP); CHKERRQ(ierr);
+        ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
+        coarsePC = subPC;
+      }
+
+      ierr = PCGetOperators(coarsePC, &A, NULL); CHKERRQ(ierr);
+      ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
     }
-
-    ierr = PCGetOperators(coarsePC, &A, NULL); CHKERRQ(ierr);
-    ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
     ierr = PetscFPrintf(comm, output, "%1.16g seconds for setup and %1.16g "
                         "seconds and %i iterations for solve (%i levels, coarse "
                         "size = %i)\n", tSetupEnd-tSetupStart, tSolveEnd-tSolveStart,
