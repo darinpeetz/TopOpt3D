@@ -65,7 +65,10 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
   lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
   // Compute the eigenvalues
+  double tEigStart = MPI_Wtime();
   ierr = lopgmres.Compute(); CHKERRQ(ierr);
+  double tEigEnd = MPI_Wtime();
+  PetscInt itEig = lopgmres.Get_It();
 
   // Get the results
   PetscInt nev_conv = lopgmres.Get_nev_conv();
@@ -171,13 +174,19 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
     dKsdU.row(topOpt->springDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
 
   // Solving each adjoint problem
+  double tAdjoint = 0;
+  PetscInt itAdjoint = 0;
   for (short i = 0; i < nev_conv; i++) {
     ierr = VecPlaceArray(dKsdU_vec, dKsdU.data() + i*dKsdU.rows()); CHKERRQ(ierr);
     ierr = VecPlaceArray(v_vec, v.data() + i*dKsdU.rows()); CHKERRQ(ierr);
     ierr = VecSet(v_vec, 0.0); CHKERRQ(ierr);
+    double t0 = MPI_Wtime();
     ierr = KSPSolve(topOpt->KUF, dKsdU_vec, v_vec); CHKERRQ(ierr);
+    double t1 = MPI_Wtime();
     PetscInt its;
     ierr = KSPGetIterationNumber(topOpt->KUF, &its); CHKERRQ(ierr);
+    tAdjoint += t1-t0;
+    itAdjoint += its;
     KSPConvergedReason reason;
     ierr = KSPGetConvergedReason(topOpt->KUF, &reason); CHKERRQ(ierr);
     if (topOpt->verbose >= 1) {
@@ -257,6 +266,13 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   ierr = topOpt->Chain_Filter(NULL, dlamdy); CHKERRQ(ierr);
   ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
   ierr = VecDestroy(&dlamdy); CHKERRQ(ierr);
+
+  if (topOpt->verbose >= 2) {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.16g seconds for setup "
+                        "and %1.16g %i iterations for eigenvalues and %1.16g "
+                        "seconds and %1.16 iterations for adjoint problems\n",
+                        tEigEnd-tEigStart, itEig, tAdjoint, itAdjoint); CHKERRQ(ierr);
+  }
 
   return 0;
 }

@@ -163,7 +163,7 @@ PetscErrorCode TopOpt::SetUpHybridPC(PC pc)
   }
   // Verbose smoother information
   if (this->verbose > 2) {
-    PCMGType mg_type;
+    PCMGType mg_type; PetscInt Asize;
     ierr = PCMGGetType(smooth_pc, &mg_type); CHKERRQ(ierr);
     ierr = PetscFPrintf(comm, output, "GAMG coarse multigrid is cycling through levels using"
                         " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
@@ -172,8 +172,10 @@ PetscErrorCode TopOpt::SetUpHybridPC(PC pc)
         ierr = KSPGetType(subKSP, &smooth_ksp_type); CHKERRQ(ierr);
         ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
         ierr = PCGetType(subPC, &smooth_pc_type); CHKERRQ(ierr);
-        ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
-                            "smoothing with %s preconditioning\n", levels+lvls-i-1,
+        ierr = PCGetOperators(subPC, &A, NULL); CHKERRQ(ierr);
+        ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
+        ierr = PetscFPrintf(comm, output, "Multigrid level %i (size %i) is using %s "
+                            "smoothing with %s preconditioning\n", levels+lvls-i-1, Asize,
                             smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
 
     }
@@ -512,6 +514,8 @@ PetscErrorCode TopOpt::FESolve()
 
   // Get the precondtioner and make modifications if necessary
   PC pc; KSPType ksptype; PCType pctype;
+  PetscBool hybrid=PETSC_FALSE;
+  PetscInt levels=0;
   ierr = KSPGetType(KUF, &ksptype); CHKERRQ(ierr);
   ierr = KSPGetPC(KUF, &pc); CHKERRQ(ierr);
   ierr = PCGetType(pc, &pctype); CHKERRQ(ierr);
@@ -520,10 +524,10 @@ PetscErrorCode TopOpt::FESolve()
                   "using %s preconditioning\n", ksptype, pctype); CHKERRQ(ierr);
   }
 
+  double tSetupStart = MPI_Wtime();
   // Set near nullspace and strength of connection metric for gamg
   if (!strcmp(pctype,PCGAMG)) {
     // Allow for increasing number of levels if number not specified
-    PetscInt levels=30;
     ierr = PetscOptionsGetInt(NULL, "kuf_", "-pc_gamg_levels", &levels, NULL);
       CHKERRQ(ierr);
     ierr = PCGAMGSetNlevels(pc, levels); CHKERRQ(ierr);
@@ -534,7 +538,6 @@ PetscErrorCode TopOpt::FESolve()
   // Print out the multigrid information
   if (!strcmp(pctype,PCGAMG) || !strcmp(pctype,PCMG)) {
     ierr = PCSetUp(pc); CHKERRQ(ierr);
-    PetscInt levels;
     KSP smooth_ksp; PC smooth_pc; KSPType smooth_ksp_type; PCType smooth_pc_type;
     ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
 
@@ -597,7 +600,7 @@ PetscErrorCode TopOpt::FESolve()
     }
     // Verbose smoother information
     if (this->verbose > 2) {
-      PCMGType mg_type;
+      PCMGType mg_type; Mat A; PetscInt Asize;
       ierr = PCMGGetType(pc, &mg_type); CHKERRQ(ierr);
       ierr = PetscFPrintf(comm, output, "Multigrid is cycling through levels using"
                           " %s scheme\n", MGTypes[mg_type].c_str()); CHKERRQ(ierr);
@@ -606,16 +609,30 @@ PetscErrorCode TopOpt::FESolve()
           ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
           ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
           ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
-          ierr = PetscFPrintf(comm, output, "Multigrid level %i is using %s "
-                              "smoothing with %s preconditioning\n", levels-i,
+          ierr = PCGetOperators(smooth_pc, &A, NULL); CHKERRQ(ierr);
+          ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
+          ierr = PetscFPrintf(comm, output, "Multigrid level %i (size %i) is using %s "
+                              "smoothing with %s preconditioning\n", levels-i, Asize,
                               smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
-
       }
     }
 
-    PetscBool hybrid;
-    ierr = PetscOptionsGetBool(NULL, NULL, "-use_hybrid_MG",
-                               &hybrid, &set); CHKERRQ(ierr);
+    // Check what the coarse solver is, and make sure it's all set up if using BJacobi
+    PetscBool isBJacobi=PETSC_FALSE;
+    ierr = PetscOptionsGetBool(NULL, NULL, "-use_hybrid_MG", &hybrid, &set); CHKERRQ(ierr);
+
+    ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+    ierr = PetscObjectTypeCompare((PetscObject)smooth_pc, PCBJACOBI, &isBJacobi); CHKERRQ(ierr);
+    if (isBJacobi && !hybrid) { // Extra things to check for coarse solver
+      // Get the operator on the coarsest scale
+      KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
+      ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+      ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+      // Now make sure it is set up
+      ierr = PCSetUp(sub_pc); CHKERRQ(ierr);
+    }
+
     // Coarse grid
     if (this->verbose >= 2) {
       if (hybrid) {
@@ -644,27 +661,70 @@ PetscErrorCode TopOpt::FESolve()
       ierr = SetUpHybridPC(pc); CHKERRQ(ierr);
     }
   }
+  double tSetupEnd = MPI_Wtime();
 
   // Isolate disconnected rigid bodies and set nullspace if necessary
-  ierr = IsolateRigid(); CHKERRQ(ierr);
+  // ierr = IsolateRigid(); CHKERRQ(ierr); // This works okay for compliance, but not for stability
   ierr = SetMatNullSpace(); CHKERRQ(ierr);
 
   // Solve for displacements
+  double tSolveStart = MPI_Wtime();
   ierr = KSPSolve(this->KUF, this->F, this->U); CHKERRQ(ierr);
+  double tSolveEnd = MPI_Wtime();
 
   // Check if we converged properly
   ierr = KSPGetConvergedReason(this->KUF, &KUF_reason); CHKERRQ(ierr);
+  PetscInt its;
+  ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
   if (this->verbose >= 1) {
-    PetscInt its;
-    ierr = KSPGetIterationNumber(this->KUF, &its); CHKERRQ(ierr);
     ierr = PetscFPrintf(comm, output, "Solve for displacements %s after %i iterations"
                         " with reason: %i\n", KUF_reason < 0 ? "failed" : "succeeded",
                         its, KUF_reason); CHKERRQ(ierr);
   }
 
+  // Report cost of solve if requested
+  if (this->myid == 0 && this->verbose >= 2) {
+    PetscInt allLevels=levels;
+    KSP coarseKSP; PC coarsePC; Mat A; PetscInt Asize;
+    ierr = PCMGGetCoarseSolve(pc, &coarseKSP); CHKERRQ(ierr);
+    ierr = KSPGetPC(coarseKSP, &coarsePC); CHKERRQ(ierr);
+
+    // If using AMG on coarse grid, report that too
+    if (hybrid) {
+      KSP subKSP; PC subPC; PetscInt lvls;
+      ierr = PCMGGetLevels(coarsePC, &lvls); CHKERRQ(ierr);
+      allLevels += lvls-1;
+      ierr = PCMGGetCoarseSolve(coarsePC, &subKSP); CHKERRQ(ierr);
+      ierr = KSPGetPC(subKSP, &subPC); CHKERRQ(ierr);
+      coarsePC = subPC;
+    }
+
+    ierr = PCGetOperators(coarsePC, &A, NULL); CHKERRQ(ierr);
+    ierr = MatGetSize(A, &Asize, NULL); CHKERRQ(ierr);
+    ierr = PetscFPrintf(comm, output, "%1.16g seconds for setup and %1.16g "
+                        "seconds and %i iterations for solve (%i levels, coarse "
+                        "size = %i)\n", tSetupEnd-tSetupStart, tSolveEnd-tSolveStart,
+                        its, allLevels, Asize); CHKERRQ(ierr);
+  }
+
   ierr = VecGhostUpdateBegin(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
   ierr = VecGhostUpdateEnd(this->U, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-  
+
+  // If using hybrid approach, check if we should drop a GMG level
+  PetscInt GMG_AMG_Threshold=200;
+  ierr = PetscOptionsGetInt(NULL, NULL, "-hybrid_GMG_AMG_it_threshold",
+                            &GMG_AMG_Threshold, NULL); CHKERRQ(ierr);
+  if (hybrid && levels > this->minGeoHybrid && its > GMG_AMG_Threshold) {
+    ierr = PCReset(pc); CHKERRQ(ierr);
+    ierr = MatDestroy(this->PR.data() + this->PR.size()-1); CHKERRQ(ierr);
+    this->PR.pop_back();
+    ierr = PCMGSetLevels(pc, this->PR.size()+1, NULL); CHKERRQ(ierr);
+    ierr = PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH); CHKERRQ(ierr);
+    for (int i = 1; i <= this->PR.size(); i++) {
+      ierr = PCMGSetInterpolation(pc, i, this->PR[this->PR.size()-i]); CHKERRQ(ierr);
+    }
+  }
+
   return 0;
 }
 
