@@ -106,13 +106,15 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
           ArrayXXPS limits, ArrayXPS values, BCTYPE TYPE)
 {
   PetscErrorCode ierr = 0;
-  ArrayXPS distances = ArrayXPS::Zero(nLocNode);
-  Eigen::Array<bool, -1, 1> valid = Eigen::Array<bool, -1, 1>::Ones(nLocNode);
+  ArrayXPS distances;
+  Eigen::Array<bool, -1, 1> valid;
   ArrayXPI newNode, newFace;
   ArrayXXPI faces = Get_Faces(this->numDims);
 
   if (TYPE != PRESSURE) {
     // Get distances from center point and check limits in each direction
+    distances.setZero(nLocNode);
+    valid.setOnes(nLocNode);
     for (PetscInt i = 0; i < numDims; i++) {
       distances += ((node.block(0,i,nLocNode,1).array() - center(i))/radius(i)).square();
       valid = valid && (node.block(0,i,nLocNode,1).array() >= limits(i,0)) &&
@@ -123,6 +125,8 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
   }
   else {
     // Get face centers
+    distances.setZero(faces.rows()*element.rows());
+    valid.setOnes(faces.rows()*element.rows());
     ArrayXXPS centers = ArrayXXPS::Zero(faces.rows()*element.rows(), this->numDims);
     for (PetscInt el = 0; el < element.rows(); el++) {
       for (PetscInt face = 0; face < faces.rows(); face++) {
@@ -135,8 +139,9 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
 
     // Get distances from center point and check limits in each direction
     for (PetscInt i = 0; i < numDims; i++) {
-      distances += ((centers - center(i))/radius(i)).square();
-      valid = valid && (centers >= limits(i,0)) && (centers <= limits(i,1));
+      ArrayXPS temporary = ((centers.col(i) - center(i))/radius(i)).square();
+      distances += ((centers.col(i) - center(i))/radius(i)).square();
+      valid = valid && (centers.col(i) >= limits(i,0)) && (centers.col(i) <= limits(i,1));
     }
     valid = valid && (distances <= 1);
     newFace = EigLab::find(valid, 1).col(0);
@@ -171,8 +176,8 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
       // Start from end of current list
       PetscInt ind = loadNode.rows();
       // Allocate enough for every node identified to be local
-      loads.conservativeResize(loadNode.rows()+faces.size(), numDims);
-      loadNode.conservativeResize(loadNode.rows()+faces.size());
+      loads.conservativeResize(loadNode.rows()+newFace.rows()*faces.cols(), numDims);
+      loadNode.conservativeResize(loadNode.rows()+newFace.rows()*faces.cols());
       // Loop over every face selected
       for (PetscInt face = 0; face < newFace.rows(); face++) {
         PetscInt el = newFace(face) / faces.rows();
