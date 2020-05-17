@@ -135,11 +135,10 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
         }
       }
     }
-    centers /= faces.rows();
+    centers /= faces.cols();
 
     // Get distances from center point and check limits in each direction
     for (PetscInt i = 0; i < numDims; i++) {
-      ArrayXPS temporary = ((centers.col(i) - center(i))/radius(i)).square();
       distances += ((centers.col(i) - center(i))/radius(i)).square();
       valid = valid && (centers.col(i) >= limits(i,0)) && (centers.col(i) <= limits(i,1));
     }
