@@ -22,6 +22,9 @@ PetscErrorCode TopOpt::Initialize()
   last_print = 0;
   interpolation = SIMP;
   KUF_reason = KSP_CONVERGED_ITERATING;
+  minGeoHybrid = 2;
+  ierr = PetscOptionsGetInt(NULL, NULL, "-hybrid_min_geo_levels",
+                            &minGeoHybrid, NULL);
 
   ierr = PrepLog(); CHKERRQ(ierr);
   MPI_Set();

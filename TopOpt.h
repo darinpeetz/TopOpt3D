@@ -145,6 +145,8 @@ public:
   Mat K;
   //Interpolation/Restriction matrices
   std::vector<Mat> PR;
+  //Minimum number of geometric levels in hybrid GMG-AMG preconditioner
+  PetscInt minGeoHybrid;
   //Communicator for each level of MG hierarchy
   std::vector<MPI_Comm> MG_comms;
   //Smoother to use with multigrid preconditioners
