@@ -269,8 +269,8 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
 
   if (topOpt->verbose >= 2) {
     ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.16g seconds for setup "
-                        "and %1.16g %i iterations for eigenvalues and %1.16g "
-                        "seconds and %1.16 iterations for adjoint problems\n",
+                        "and %i iterations for eigenvalues and %1.16g "
+                        "seconds and %i iterations for adjoint problems\n",
                         tEigEnd-tEigStart, itEig, tAdjoint, itAdjoint); CHKERRQ(ierr);
   }
 
