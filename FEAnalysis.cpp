@@ -622,16 +622,12 @@ PetscErrorCode TopOpt::FESolve()
         ierr = PetscFPrintf(comm, output, "Multigrid coarse grid is using "
                             "AMG preconditioning\n"); CHKERRQ(ierr);
       } else {
-        ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
         ierr = KSPGetType(smooth_ksp, &smooth_ksp_type); CHKERRQ(ierr);
-        ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
         ierr = PCGetType(smooth_pc, &smooth_pc_type); CHKERRQ(ierr);
         ierr = PetscFPrintf(comm, output, "Multigrid coarse grid is using %s "
                             "with %s preconditioning\n",
                             smooth_ksp_type, smooth_pc_type); CHKERRQ(ierr);
-        PetscBool same;
-        ierr = PetscObjectTypeCompare((PetscObject) smooth_pc, PCBJACOBI, &same); CHKERRQ(ierr);
-        if (same == PETSC_TRUE) {
+        if (isBJacobi) {
           KSP *sub_ksp; PC sub_pc; PetscInt blocks, first;
           ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
           ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
@@ -761,7 +757,7 @@ PetscErrorCode TopOpt::SetMatNullSpace()
     }
   }
 
-  // Zero out detached parts of the rigid body modes
+/*  // Zero out detached parts of the rigid body modes
   PetscScalar minStiff;
   ierr = VecMin(this->E, NULL, &minStiff); CHKERRQ(ierr);
   if (minStiff == 0) {
@@ -778,7 +774,7 @@ PetscErrorCode TopOpt::SetMatNullSpace()
     }
     ierr = VecRestoreArray(this->U, &p_U); CHKERRQ(ierr);
     ierr = VecRestoreArrays(NullVecs, nRBM, &p_Vecs); CHKERRQ(ierr);
-  }
+  }*/
 
   // Normalize the nullspace vectors
   PetscScalar dots[nRBM-1];
