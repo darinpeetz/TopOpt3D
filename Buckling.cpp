@@ -267,13 +267,11 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   ierr = VecResetArray(dlamdy); CHKERRQ(ierr);
   ierr = VecDestroy(&dlamdy); CHKERRQ(ierr);
 
-  if (this->verbose >= 2) {
-    logger << tEigEnd-tEigStart << " seconds and " << itEig << " iterations for eigenvalues and "
-           << tAdjoint << " seconds and " << itAdjoint << " iterations for adjoint problems\n";
-    ierr = PetscFPrintf(comm, output, "%1.16g seconds for setup and %1.16g "
-                        "%i iterations for eigenvalues and %1.16g seconds and "
-                        "%1.16 iterations for adjoint problems\n", tEigEnd-tEigStart,
-                        itEig, tAdjoint, itAdjoint); CHKERRQ(ierr);
+  if (topOpt->verbose >= 2) {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.16g seconds for setup "
+                        "and %1.16g %i iterations for eigenvalues and %1.16g "
+                        "seconds and %1.16 iterations for adjoint problems\n",
+                        tEigEnd-tEigStart, itEig, tAdjoint, itAdjoint); CHKERRQ(ierr);
   }
 
   return 0;
