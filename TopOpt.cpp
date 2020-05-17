@@ -25,6 +25,8 @@ PetscErrorCode TopOpt::Initialize()
 
   ierr = PrepLog(); CHKERRQ(ierr);
   MPI_Set();
+  char fname[200] = "Output.txt";
+  ierr = PetscOptionsGetString(NULL, NULL, "-output", fname, 200, NULL); CHKERRQ(ierr);
   ierr = PetscFOpen(comm, "Output.txt", "w", &output); CHKERRQ(ierr);
 
   return ierr;
