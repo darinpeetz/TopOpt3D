@@ -215,7 +215,7 @@ PetscErrorCode TopOpt::Set_BC(ArrayXPS center, ArrayXPS radius,
     }
     default: {
       PetscPrintf(comm, "Bad BC type given in input file, valid types are");
-      PetscPrintf(comm, " Support, Load, Mass, and Spring\n");
+      PetscPrintf(comm, " Support, Load, Pressure, Mass, and Spring\n");
       break;
     }
   }
