@@ -189,12 +189,12 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
     itAdjoint += its;
     KSPConvergedReason reason;
     ierr = KSPGetConvergedReason(topOpt->KUF, &reason); CHKERRQ(ierr);
-    if (topOpt->verbose >= 1) {
+    if (topOpt->verbose >= 1 and reason > 0) {
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
                     "equation #%i converged in %i iterations with reason: %i\n",
                     i, its, reason); CHKERRQ(ierr);
     }
-    else {
+    else if (topOpt->verbose >= 1) {
       ierr = PetscFPrintf(topOpt->comm, topOpt->output, "Solve for adjoint "
                     "equation #%i failed with reason %i", i, reason); CHKERRQ(ierr);
     }
@@ -268,7 +268,7 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   ierr = VecDestroy(&dlamdy); CHKERRQ(ierr);
 
   if (topOpt->verbose >= 2) {
-    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.16g seconds for setup "
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output, "%1.16g seconds "
                         "and %i iterations for eigenvalues and %1.16g "
                         "seconds and %i iterations for adjoint problems\n",
                         tEigEnd-tEigStart, itEig, tAdjoint, itAdjoint); CHKERRQ(ierr);
