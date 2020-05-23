@@ -108,7 +108,7 @@ protected:
   // Stress stiffness partial sensitivity
   VectorXPS dKsdy;
   // Element stress stiffness sensitivity wrt local displacement
-  MatrixXPS dKsdu;
+  std::vector<MatrixXPS> dKsdu;
   // Adjoint vector
   MatrixXPS v;
   // Eigensolver

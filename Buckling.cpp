@@ -16,7 +16,7 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
 {
   PetscErrorCode ierr = 0;
   short NE = topOpt->element.cols(), DN = topOpt->numDims, DE = NE*DN;
-  PC pc; PetscInt levels;
+  PC pc;
 
   /// Assemble stress stiffness matrix and get sensitivity information
   if (Ks == NULL) {
@@ -37,16 +37,22 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
     ierr = KSPSetOperators(topOpt->KUF, topOpt->K, topOpt->K); CHKERRQ(ierr);
     ierr = KSPSetUp(topOpt->KUF); CHKERRQ(ierr);
 
+    // If we're using extra fixed dof for stability, make sure coarse grid is
+    // LU and not expensive pseudo-inverse
+    KSP smooth_ksp, *sub_ksp; PC smooth_pc, sub_pc; PetscInt blocks, first;
     ierr = KSPGetPC(topOpt->KUF, &pc); CHKERRQ(ierr);
-    ierr = PCMGGetLevels(pc, &levels); CHKERRQ(ierr);
-    KSP smooth_ksp; PC smooth_pc;
-    for (int i = 1; i < levels; i++) {
-      ierr = PCMGGetSmoother(pc, i, &smooth_ksp); CHKERRQ(ierr);
-      ierr = KSPSetType(smooth_ksp, KSPRICHARDSON); CHKERRQ(ierr);
-      ierr = KSPRichardsonSetScale(smooth_ksp, 5.0/10.0); CHKERRQ(ierr);
-      ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
-      ierr = PCSetType(smooth_pc, PCPBJACOBI); CHKERRQ(ierr);
-    }
+    ierr = PCMGGetCoarseSolve(pc, &smooth_ksp); CHKERRQ(ierr);
+    ierr = KSPGetPC(smooth_ksp, &smooth_pc); CHKERRQ(ierr);
+    ierr = PCSetType(smooth_pc, PCBJACOBI); CHKERRQ(ierr);
+    ierr = PCSetUp(smooth_pc); CHKERRQ(ierr);
+    ierr = PCBJacobiGetSubKSP(smooth_pc, &blocks, &first, &sub_ksp); CHKERRQ(ierr);
+    ierr = KSPGetPC(sub_ksp[0], &sub_pc); CHKERRQ(ierr);
+    ierr = PCSetType(sub_pc, PCLU); CHKERRQ(ierr);
+    ierr = PCFactorSetShiftType(sub_pc, MAT_SHIFT_INBLOCKS); CHKERRQ(ierr);
+    ierr = KSPSetTolerances(sub_ksp[0], PETSC_DEFAULT, PETSC_DEFAULT,
+                            PETSC_DEFAULT, 1); CHKERRQ(ierr);
+    ierr = KSPSetType(sub_ksp[0], KSPPREONLY); CHKERRQ(ierr);
+    ierr = PCSetUp(sub_pc); CHKERRQ(ierr);
   }
 
   // Set ouptput parameters for lopgmres
@@ -62,7 +68,7 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   // Set target eigenvalues
   Nev_Type target_type = TOTAL_NEV;
   lopgmres.Set_Target(LR, nvals, target_type);
-  lopgmres.Set_MaxIt(3*(nvals+1)*50*(PetscInt)std::log(topOpt->nElem));
+  lopgmres.Set_MaxIt(500);//150*(PetscInt)std::log(topOpt->nElem));
   lopgmres.Set_Tol(std::pow(10,std::log10(2*topOpt->nNode)/2-9));
   // Compute the eigenvalues
   double tEigStart = MPI_Wtime();
@@ -126,17 +132,17 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   /// Stress Stiffness partial with respect to u
   /// (Es is factored out so this step is only needed once)
   if (this->dKsdu.size() == 0) {
-    short dDE = DE*DE;
-    this->dKsdu.setZero(dDE , DE);
+    this->dKsdu.resize(DE);
     // Loop over dof of a single element
     for (int dof = 0; dof < DE; dof++) {
-    Eigen::Map< MatrixXPS > dksdu(this->dKsdu.data() + dDE*dof, DE, DE);
-    Eigen::VectorXd du = Eigen::VectorXd::Zero(DE);
-    du(dof) = 1;
-    // Loop through quadrature points
-    for (int qp = 0; qp < pow(2, topOpt->numDims); qp++)
-      dksdu += topOpt->W[qp]*topOpt->GT[qp]*sigtos(topOpt->d*topOpt->B[qp]*du)
-        *  topOpt->G[qp]*topOpt->detJ;
+      this->dKsdu[dof].setZero(DE, DE);
+      Eigen::VectorXd du = Eigen::VectorXd::Zero(DE);
+      du(dof) = 1;
+      // Loop through quadrature points
+      for (int qp = 0; qp < pow(2, topOpt->numDims); qp++)
+        this->dKsdu[dof] += topOpt->W[qp]*topOpt->GT[qp] *
+                            sigtos(topOpt->d*topOpt->B[qp]*du) *
+                            topOpt->G[qp]*topOpt->detJ;
     }
   }
 
@@ -146,16 +152,25 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
                         " adjoint equations\n"); CHKERRQ(ierr);
   }
   MatrixXPS dKsdU = MatrixXPS::Zero(topOpt->node.size(), nev_conv);
+  MatrixXPS phi_loc(DE, nev_conv);
   v.resize(dKsdU.rows(), dKsdU.cols());
   const PetscScalar *p_Es;
   ierr = VecGetArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
   for (PetscInt el = 0; el < topOpt->element.rows(); el++) {
-    MatrixXPS dKs = p_Es[el] * this->dKsdu;
+    // Get the local parts of the eigenvectors in phi_loc
+    for (int j = 0; j < NE; j++) {
+      phi_loc.block(DN*j, 0, DN, nev_conv) =
+            topOpt->bucklingShape.block(DN*topOpt->element(el, j), 0, DN, nev_conv);
+    }
+    // Take inner product of phi^T*dKsdu*phi for each dof in the element
     for (int nd = 0; nd < NE; nd++) {
-      if (topOpt->element(el,nd) < topOpt->nLocNode)
-        dKsdU.block(DN*topOpt->element(el,nd), 0, DN, nev_conv) +=
-          dKs.block(0, DN*nd, DE*DE, DN).transpose() *
-          phim.block(el*DE*DE, 0, DE*DE, nev_conv);
+      if (topOpt->element(el,nd) < topOpt->nLocNode) {
+        for (int dof = 0; dof < topOpt->numDims; dof++) {
+          MatrixXPS dKs = p_Es[el] * this->dKsdu[DN*nd + dof];
+          dKsdU.row(DN*topOpt->element(el,nd)+dof) +=
+            phi_loc.cwiseProduct(dKs*phi_loc).colwise().sum();
+        }
+      }
     }
   }
   ierr = VecRestoreArrayRead(topOpt->Es, &p_Es); CHKERRQ(ierr);
@@ -170,8 +185,8 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   // Zero out fixed dof in the rhs
   for (unsigned int i = 0; i < topOpt->fixedDof.size(); i++)
     dKsdU.row(topOpt->fixedDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
-  for (unsigned int i = 0; i < topOpt->springDof.size(); i++)
-    dKsdU.row(topOpt->springDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
+  for (unsigned int i = 0; i < topOpt->eigenFixedDof.size(); i++)
+    dKsdU.row(topOpt->eigenFixedDof[i]-topOpt->numDims*topOpt->nddist[topOpt->myid]).setZero();
 
   // Solving each adjoint problem
   double tAdjoint = 0;
@@ -206,60 +221,49 @@ PetscErrorCode Stability::Function(TopOpt *topOpt)
   ierr = VecDestroy(&dKsdU_vec); CHKERRQ(ierr);
   ierr = VecDestroy(&v_vec); CHKERRQ(ierr);
 
-  MatrixXPS vm((DE*DE)*topOpt->nLocElem, nev_conv);
-  Eigen::VectorXd Um((DE*DE)*topOpt->nLocElem);
-  const PetscScalar *p_U;
-  ierr = VecGetArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
-  for (long el = 0; el < topOpt->nLocElem; el++) {
-    ArrayXPI eDof(DE);
-    for (int i = 0; i < NE; i++) {
-      for (int j = 0; j < DN; j++)
-        eDof(i*DN + j) = DN*topOpt->element(el, i) + j;
-      }
-    for (int i = 0; i < DE; i++) {
-      for (int j = 0; j < DE; j++) {
-        vm.row((DE*DE)*el + DE*i + j) = v.block(eDof(j),0,1,nev_conv);
-        Um((DE*DE)*el + DE*i + j) = p_U[eDof[i]];
-      }
-    }
-  }
-  ierr = VecRestoreArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
-
-  /// Construct sensitivity of material stiffness matrix
-  const PetscScalar *p_dEdz;
+  // dlamdrhof
+  VectorXPS U_loc(DE);
+  MatrixXPS v_loc(DE, nev_conv);
+  const PetscScalar *p_dEdz, *p_U;
   ierr = VecGetArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
-  Eigen::Map< const Eigen::VectorXd > dEdz(p_dEdz, topOpt->nLocElem);
-  MatrixXPS dKdy;
-  if (topOpt->regular) {
-    Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    dKdy = Eigen::kroneckerProduct(dEdz, ke);
-  }
-  else {
-    PetscInt ind = 0;
-    for (unsigned int el = 0; el < topOpt->ke.size(); el++)
-      ind += topOpt->ke[el].size();
-    dKdy.resize(ind, 1);
-    ind = 0;
-    Eigen::Map< Eigen::VectorXd > ke(topOpt->ke[0].data(), DE*DE);
-    for (unsigned int el = 0; el < topOpt->ke.size(); el++) {
-      new (&ke)Eigen::Map< Eigen::VectorXd >(topOpt->ke[el].data(),topOpt->ke[el].size());
-      dKdy.block(ind, 0, ke.size(), 1) = dEdz(el)*ke;
+  ierr = VecGetArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
+  gradients.setZero();
+  for (long el = 0; el < topOpt->nLocElem; el++) {
+    // Get local parts of U, phi, and v
+    for (int j = 0; j < NE; j++) {
+      for (int i = 0; i < DN; i++) {
+        PetscInt dof = DN * topOpt->element(el, j) + i;
+        U_loc(DN*j+i) = p_U[dof];
+        phi_loc.row(DN*j+i) = topOpt->bucklingShape.block(dof, 0, 1, nev_conv);
+        v_loc.row(DN*j+i) = v.block(dof, 0, 1, nev_conv);
+      }
     }
+
+    // Material stiffness sensitivity
+    MatrixXPS dKdy;
+    if (topOpt->regular) {
+      dKdy = p_dEdz[el] * topOpt->ke[0];
+    } else {
+      dKdy = p_dEdz[el] * topOpt->ke[el];
+    }
+
+    // Throw it all together to get the sensitivity
+    Eigen::Map< MatrixXPS > dKs(dKsdy.data() + DE*DE*el, DE, DE);
+    VectorXPS pdKp = (phi_loc.cwiseProduct(dKdy*phi_loc)).colwise().sum();
+    VectorXPS pdKsp = (phi_loc.cwiseProduct(dKs*phi_loc)).colwise().sum();
+    gradients(el) = (lambda.pow(p-1) * (pdKsp - lambda.matrix().cwiseProduct(pdKp) +
+                                        v_loc.transpose() * (dKdy*U_loc)).array()).sum();
   }
   ierr = VecRestoreArrayRead(topOpt->dEdz, &p_dEdz); CHKERRQ(ierr);
-
-  /// Construct sensitivity
-  VectorXPS df = VectorXPS::Zero(dKdy.rows());
-  for (short j = 0; j < nev_conv; j++) {
-    df += (phim.block(0,j,dKdy.rows(),1).cwiseProduct(dKsdy-lambda[j]*dKdy)
-        + vm.col(j).cwiseProduct(dKdy.cwiseProduct(Um))) * std::pow((PetscScalar)lambda(j), p-1);
-  }
-  
-  for (PetscInt el = 0; el < topOpt->nLocElem; el++)
-    gradients(el) = df.segment(el*(DE*DE), DE*DE).sum();
+  ierr = VecRestoreArrayRead(topOpt->U, &p_U); CHKERRQ(ierr);
+  // Last part of p-norm aggregation
   gradients *= std::pow((PetscScalar)values(0), 1-p);
 
-  /// dCdrhof*drhofdrho and power function accumulation
+  /// dlamdrhof*drhofdrho
+  if (topOpt->verbose >= 3) {
+    ierr = PetscFPrintf(topOpt->comm, topOpt->output,
+                        "Assembling filter chain rule to sensitivity\n"); CHKERRQ(ierr);
+  }
   Vec dlamdy;
   ierr = VecDuplicate(topOpt->dEdz, &dlamdy); CHKERRQ(ierr);
   ierr = VecPlaceArray(dlamdy, gradients.data()); CHKERRQ(ierr);
